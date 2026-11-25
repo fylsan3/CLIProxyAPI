@@ -1,0 +1,124 @@
+'use strict';
+const tokenKey='native-refresh-view';const pending={};const proxies={};const viewers={};let trackedAuthorization='';let working=false;
+if(location.hash.length>1){sessionStorage.setItem(tokenKey,location.hash.slice(1));history.replaceState(null,'',location.pathname);}
+const labels={account_ready:'可接单',invalid_account_id:"账号编号格式有误，请使用小写英文字母、数字和中划线，末尾不能为中划线",invalid_account_label:"显示名称须为 1—60 个字符，不能含首尾空格或控制字符",provider_not_available:"当前运行配置不支持该提供方，请检查配置",account_already_registered:"该编号已绑定其他账号记录，请使用新的编号",account_not_registered:"未找到账号记录，请先添加账号",browser_sandbox_unavailable:"浏览器安全隔离检查未通过，窗口已关闭；请检查容器安全规则",browser_start_failed:"容器浏览器启动失败，请检查浏览器运行环境",stop_account_before_restore:"请先停止该账号容器再恢复，当前数据不会被覆盖",backup_card_changed:"备份不属于当前账号环境，已拒绝恢复",backup_package_changed:"备份文件发生变化，已拒绝恢复",backup_credentials_older_than_local:"备份凭据比本地旧，已拒绝覆盖",backup_restore_failed:"备份校验或恢复未完成，原账号数据已保留",account_proxy_unavailable:"账号代理或出口检查失败，已停派",network_status_unknown:"网络检查状态无法确认，已停派",environment_backup_required:'环境备份未通过，暂不派单',environment_protection_unknown:'环境保护状态无法确认，暂不派单',missing:'尚未创建',container_stopped:'容器已停止',worker_unavailable:'执行器不可用',binding_check_failed:'容器或数据盘归属检查失败',credential_save_failed:'凭据保存失败',offline_ready:'离线测试可接单',authorization_pending:'正在等待授权',authorization_required:'需要授权',credential_expired:'访问凭据已到期，已停派',credential_rejected:'访问凭据被拒，已停派',account_disabled:'账号已停用',account_unavailable:'账号不可用或冷却中'};
+const protectionLabels={not_created:'尚未创建',creating:'正在准备账号环境与初始备份',creation_failed:'创建未完成，需要检查环境',awaiting_authorization:'初始环境备份完成，等待授权',authorizing:'正在等待授权',exchanging_credentials:'正在保存授权凭据',authorization_failed:'授权未完成',closing_browser:'正在关闭浏览器',saving_backup:'正在保存授权后环境',verifying_backup:'正在校验完整备份',starting_protected_environment:'正在恢复执行器',ready:'环境与备份校验通过',backup_failed:'备份未完成，可重试，不需要重新授权',checking_restore:'正在检查恢复条件',recovery_check_failed:'恢复检查未通过，已停派'};
+const authorizationLabels={authorization_cancelled:'已取消授权',authorization_expired:'授权等待已超时',authorization_denied:'已在授权页面取消',authorization_exchange_failed:'授权信息交换未完成'};
+const renewalLabels={sign_in_required:'续期需要登录；服务状态单独判断',expired_sign_in_required:'凭据不可用，需要登录',retry_scheduled:'刷新失败，已安排重试',renewal_verified:'最近刷新成功',awaiting_first_renewal:'尚未刷新'};
+const results={preparing:'正在检查执行条件',not_dispatched:'未派入容器',running:'执行中',completed:'执行已完成',result_unknown:'执行结果待确认'};
+const stops={environment_backup_required:"环境备份未通过，未派入容器",environment_protection_unknown:"环境保护状态无法确认，未派入容器",client_disconnected:'客户端已断开，已请求停止',controller_stopping:'控制服务正在停止',execution_interrupted:'执行链路中断',client_delivery_incomplete:'执行已完成，客户端接收不完整'};
+const status=document.querySelector('#status'),accounts=document.querySelector('#accounts');let busy=false;
+function text(parent,tag,value,className){const e=document.createElement(tag);e.textContent=value;if(className)e.className=className;parent.append(e);return e;}
+function detail(parent,title){const section=text(parent,'section','');text(section,'h3',title);return section;}
+function fact(parent,label,value){const group=text(parent,'div','');text(group,'dt',label);text(group,'dd',value);}
+function showAdd(open=true){const panel=document.querySelector('#account-add');panel.hidden=!open;document.querySelector('#add-account').setAttribute('aria-expanded',String(open));if(open)document.querySelector('#account-label').focus();else document.querySelector('#add-account').focus();}
+const expandedAccounts=new Set();let currentProjects=[];
+function filterAccounts(){const q=document.querySelector('#account-search').value.trim().toLocaleLowerCase();let shown=0;for(const card of accounts.querySelectorAll('.account-card')){card.hidden=!card.dataset.search.includes(q);if(!card.hidden)shown++;}const empty=document.querySelector('#search-empty');if(empty)empty.hidden=!currentProjects.length||shown>0;}
+document.querySelector('#add-account').onclick=()=>showAdd();document.querySelector('#cancel-add').onclick=()=>showAdd(false);document.querySelector('#account-search').addEventListener('input',filterAccounts);
+function renderCard(p,data){
+ const card=text(accounts,'article','','account-card');card.dataset.account=p.slug;card.dataset.search=((p.label||'')+' '+p.slug).toLocaleLowerCase();
+ const main=text(card,'div','','card-main'),heading=text(main,'div','','card-heading'),title=text(heading,'div','','account-title');
+ text(title,'h2',p.label||p.slug);text(title,'p',p.slug+' · '+(data.providers?.[p.provider]?.label||p.provider),'muted');
+ const needsAuth=['authorization_required','authorization_pending'].includes(p.reason);
+ text(heading,'span',p.overall_ready?'可接单':p.reason==='missing'?'待创建环境':p.reason==='authorization_pending'?'等待授权':p.reason==='authorization_required'?'需要授权':'暂停接单','badge '+(p.overall_ready?'good':p.reason==='missing'?'':'warning'));
+ const protection=p.protection||{phase:'not_created'},backup=p.portable_backup,central=p.central_dispatch||{reason:'unknown'};
+ const centralLabels={eligible:'调度条件满足',cooldown:'中央冷却中',disabled:'中央已停用',unavailable:'中央暂不可用',unknown:'中央状态无法读取'};
+ const facts=text(main,'dl','','card-facts');fact(facts,'容器状态',p.reason==='missing'?'尚未创建':labels[p.reason]||'状态待确认');fact(facts,'账号网络',p.network?(p.network.healthy?'检查通过':'检查未通过'): '等待检查');fact(facts,'活动请求',p.state?.active_calls??'—');
+ const notice=p.reason==='missing'?'绑定 SOCKS 后创建此账号的独立运行环境。':needsAuth?'在容器浏览器内完成授权，完成后自动关闭浏览器并保存环境。':!p.overall_ready?(labels[p.reason]||centralLabels[central.reason]||'请展开详情查看原因。'):'';
+ text(main,'p',notice,'card-notice');
+ if(p.network?.timezone_warning)text(main,'p',p.network.timezone_check_reason==='timezone_changed'?'出口时区与固定时区不同；继续使用 '+p.network.fixed_timezone+'。':'本次未能核对出口时区；继续使用已保存的时区。','card-notice');
+ if(p.state?.authorization_issue)text(main,'p',authorizationLabels[p.state.authorization_issue]||'授权未完成，请查看详情。','error');
+ if(p.state?.storage_warning)text(main,'p','凭据保存或备份异常，请检查存储；有效调用继续按 CPA 原逻辑处理。','error');
+ const actions=text(main,'div','','actions');
+ if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase)){
+  const label=text(main,'label','账号 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='password';input.autocomplete='off';input.placeholder='socks5h://用户名:密码@IP:端口';input.value=proxies[p.slug]||'';input.dataset.owner=p.slug;input.addEventListener('input',()=>proxies[p.slug]=input.value);label.append(input);main.append(actions);
+ }
+ function action(parent,operation,label,secondary=false){const b=text(parent,'button',label,secondary?'secondary':'');b.dataset.focusId=p.slug+':'+operation;b.disabled=working;b.addEventListener('click',()=>operate(p.slug,operation));return b;}
+ if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase))action(actions,'create','校验代理并创建容器');
+ if(p.reason==='authorization_required')action(actions,'auth-begin','打开浏览器授权');
+ if(p.reason==='authorization_pending'){
+  if(viewers[p.slug]){const link=text(actions,'a','进入容器浏览器','button-link');link.href=viewers[p.slug];link.target='_blank';link.rel='noreferrer noopener';}
+  action(actions,'open-browser','展开 / 重新进入浏览器',!!viewers[p.slug]);action(actions,'auth-cancel','取消授权',true);
+ }
+ if(p.reason==='container_stopped')action(actions,'restart','重启容器');
+ if(p.reason==='account_proxy_unavailable')action(actions,'restart','重新检查网络');
+ if(['backup_failed','recovery_check_failed'].includes(protection.phase)||(p.state?.authorized&&!protection.backup_verified))action(actions,'retry-backup','重试环境备份');
+ if(!actions.children.length)actions.hidden=true;
+ const details=text(card,'details','','account-detail');text(details,'summary','环境、授权与用量详情').dataset.focusId=p.slug+':details';details.open=expandedAccounts.has(p.slug);details.addEventListener('toggle',()=>{if(details.isConnected){if(details.open)expandedAccounts.add(p.slug);else expandedAccounts.delete(p.slug);}});
+ const content=text(details,'div','','detail-content');let section=detail(content,'环境与网络');
+ text(section,'p','容器编号：'+(p.container?p.container.slice(0,12):'未创建'));text(section,'p','中央调度：'+(centralLabels[central.reason]||'未知'));
+ if(central.retry_after)text(section,'p','下次可重试：'+new Date(central.retry_after).toLocaleString());
+ if(p.network){text(section,'p',p.network.healthy?'启动网络检查通过；不进行定时公网出口探测。':'网络检查未通过或本地监督失联，已暂停新任务。');if(p.network.fixed_timezone)text(section,'p','固定时区：'+p.network.fixed_timezone+' · 系统与浏览器语言：英语');if(p.network.observed_timezone&&p.network.timezone_warning)text(section,'p','本次出口时区：'+p.network.observed_timezone);if(p.network.network_checked_at)text(section,'p','启动检查：'+new Date(p.network.network_checked_at*1000).toLocaleString());if(p.network.last_success_at)text(section,'p','最近检查成功：'+new Date(p.network.last_success_at*1000).toLocaleString());if(p.network.checking)text(section,'p','正在检查代理和公网出口…');}
+ if(p.exit_code!==undefined)text(section,'p','容器退出码：'+p.exit_code);
+ section=detail(content,'授权与凭据');
+ if(p.state){text(section,'p','凭据修订：'+p.state.revision);text(section,'p','刷新：'+(p.state.refreshing?'正在刷新，有效凭据继续服务':renewalLabels[p.state.renewal_state]||'空闲'));for(const [key,label] of [['expires','到期时间'],['last_refresh','最近刷新'],['next_refresh','最早下次检查']])if(p.state[key])text(section,'p',label+'：'+new Date(p.state[key]).toLocaleString());}else text(section,'p','尚无授权信息。');
+ if(p.reason==='authorization_pending')text(section,'p','浏览器收起后可用“展开 / 重新进入浏览器”恢复原窗口。');
+ section=detail(content,'环境保护与备份');text(section,'p',protectionLabels[protection.phase]||'环境保护状态未知');if(protection.environment_id)text(section,'p','环境编号：'+protection.environment_id.slice(0,12));if(protection.initial_backup)text(section,'p','初始环境备份：已完成');if(protection.verified_at)text(section,'p','完整备份校验：'+new Date(protection.verified_at*1000).toLocaleString());
+ if(backup){text(section,'p',backup.state==='exported'?'加密备份已保存 · 凭据版本 '+backup.revision+' · '+new Date(backup.exported_at*1000).toLocaleString():backup.state==='not_created'?'创建环境后自动备份':backup.state==='not_exported'?'等待保存加密备份包':'备份位置暂不可用');if(backup.warning)text(section,'p','最近一次备份未完成，已有备份保留，可重试。');}text(section,'p','本地备份不能覆盖整台主机丢失；异机副本尚未验证。');
+ section=detail(content,'上游额度观测');for(const line of quotaLines(p.state?.quota_observation))text(section,'p',line);
+ section=detail(content,'已确认用量');if(p.usage){const u=p.usage;text(section,'p','输入：'+(u.totals.input_tokens??'未报告')+' · 输出：'+(u.totals.output_tokens??'未报告'));text(section,'p','完整 '+u.attempt_counts.confirmed+' · 部分 '+u.attempt_counts.partial+' · 未报告 '+u.attempt_counts.unreported+' · 异常 '+u.attempt_counts.invalid);text(section,'p','模型报告值，不是账单；部分记录不计入合计。');}else text(section,'p','暂无用量记录。');
+ section=detail(content,'最近执行记录');if(!p.attempts?.length)text(section,'p','暂无执行记录。');for(const a of p.attempts||[])text(section,'p',(results[a.state]||a.state)+' · '+a.id.slice(0,10)+(a.status?' · HTTP '+a.status:'')+(a.stop_reason?' · '+(stops[a.stop_reason]||a.stop_reason):''));
+ const more=text(content,'div','','detail-actions');if(p.state?.authorized&&!p.state.refreshing)action(more,'auth-refresh','立即刷新凭据',true);if(protection.backup_verified)action(more,'backup-export','更新加密备份',true);if(['container_stopped','worker_unavailable','network_status_unknown','binding_check_failed'].includes(p.reason)&&backup?.state==='exported')action(more,'backup-restore','从加密备份恢复',true);if(!more.children.length)more.hidden=true;
+}
+
+async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].includes(document.activeElement?.tagName)))return;busy=true;const focusKey=document.activeElement?.dataset?.focusId;try{
+ const token=sessionStorage.getItem(tokenKey);if(!token)throw Error('请返回管理首页登录。');
+ const r=await fetch('/snapshot',{headers:{'X-Offline-View':token},cache:'no-store'});if(!r.ok)throw Error(r.status===401?'管理登录失效，请重新登录。':'状态读取失败；旧状态不能作为派单依据。');
+ const data=await r.json();
+ const providerSelect=document.querySelector('#account-provider');const oldProvider=providerSelect.value;providerSelect.replaceChildren();
+ for(const [value,info] of Object.entries(data.providers||{})){const option=text(providerSelect,'option',info.label);option.value=value;}
+ if([...providerSelect.options].some(o=>o.value===oldProvider))providerSelect.value=oldProvider;providerSelect.disabled=providerSelect.options.length===0;
+ document.querySelector('#runtime-mode').textContent=data.runtime_mode==='managed'?'运行模式：账号独立容器 · 真实订阅通道待验收':data.runtime_mode==='closed_tls_test'?'闭网 HTTPS 测试 · 官方域名由本地测试服务响应 · 没有真实账号':'闭网模拟测试 · 没有真实账号';
+ if(trackedAuthorization&&!working){const current=data.projects.find(p=>p.slug===trackedAuthorization);if(current){const phase=current.protection?.phase;const progress=document.querySelector('#progress');if(phase==='ready'){progress.textContent='授权已保存，浏览器已关闭，环境备份校验通过。实际接单资格请看账号卡片。';delete viewers[trackedAuthorization];trackedAuthorization='';}else if(phase==='authorizing'){progress.textContent='正在等待容器浏览器内的授权操作；完成后自动关闭浏览器并备份。';}else if(phase){progress.textContent=protectionLabels[phase]||'正在检查授权后的环境状态。';}}}
+ renderLogging(data.logging_to_file);
+ accounts.replaceChildren();document.querySelector('#version').textContent='运行版本：'+data.release.candidate+' · 自动刷新并发：'+(data.refresh_workers??'未知');
+ currentProjects=data.projects;
+ document.querySelector('#count-all').textContent=data.projects.length;
+ document.querySelector('#count-ready').textContent=data.projects.filter(p=>p.overall_ready).length;
+ document.querySelector('#count-pending').textContent=data.projects.filter(p=>!p.overall_ready).length;
+ document.querySelector('#list-count').textContent=data.projects.length?String(data.projects.length):'';
+ if(!data.projects.length){
+  const empty=text(accounts,'div','','empty');
+  empty.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M12 6.5h5M12 17.5h5"/></svg>';
+  text(empty,'h3','添加你的第一个账号');text(empty,'p','每个账号拥有独立容器。绑定代理并完成浏览器授权后，在这里查看接单状态。');
+  const steps=text(empty,'div','','onboarding');for(const [index,label] of ['绑定代理','浏览器授权','环境就绪'].entries()){const step=text(steps,'span','');text(step,'b',index+1);text(step,'span',label);}
+  const button=text(empty,'button','添加账号');button.onclick=()=>showAdd();
+ }
+ for(const p of data.projects)renderCard(p,data);
+ const noMatch=text(accounts,'p','没有匹配的账号，请尝试其他名称或编号。','empty');noMatch.id='search-empty';noMatch.hidden=true;filterAccounts();
+ const requestList=document.querySelector('#requests');requestList.replaceChildren();
+ if(!data.requests.length)text(requestList,'p','尚无请求记录。账号开始接单后，可在这里核对每次请求的执行路径。');
+ for(const group of data.requests){const block=text(requestList,'article','');text(block,'h3','请求 '+group.run);
+ group.attempts.forEach((a,i)=>{text(block,'p','第 '+(i+1)+' 次 · 账号 '+a.owner+' · '+(results[a.state]||a.state)+(a.status?' · HTTP '+a.status:'')+' · 容器 '+(a.container?a.container.slice(0,12):'未派入'));
+ if(a.response)text(block,'p','回复摘要：'+a.response.slice(0,16)+'…');});
+ if(group.truncated)text(block,'p','记录超过页面上限，需查询完整本地记录。');}
+ status.className='';status.textContent='更新于 '+new Date().toLocaleTimeString();
+ }catch(e){renderLogging(null);status.textContent=e.message;status.className='error';for(const id of ['count-all','count-ready','count-pending'])document.querySelector('#'+id).textContent='—';accounts.replaceChildren();const failure=text(accounts,'div','','empty');text(failure,'h3','暂时无法读取账号状态');text(failure,'p','请检查管理服务连接后重试。当前页面不显示过期的接单状态。');const retry=text(failure,'button','重新读取');retry.onclick=()=>refresh(true);document.querySelector('#requests').replaceChildren();}finally{busy=false;if(focusKey){[...accounts.querySelectorAll('[data-focus-id]')].find(el=>el.dataset.focusId===focusKey)?.focus({preventScroll:true});}}}
+document.querySelector('#refresh').addEventListener('click',()=>refresh(true));refresh();setInterval(()=>{if(!document.hidden)refresh();},5000);
+
+async function operate(slug,action){
+ if(working)return;working=true;const progress=document.querySelector('#progress');
+ const messages={'backup-export':'已请求更新加密备份，执行器继续运行…','backup-restore':'正在验证备份并恢复到新数据卷，保留原数据…','retry-backup':'正在使用已保存的授权重新备份和校验，不重新登录…',create:'正在校验代理配置、准备容器并检查网络…','auth-begin':'正在启动容器浏览器和授权回调…','open-browser':'正在恢复窗口并连接原来的容器浏览器…','close-browser':'正在关闭容器浏览器…','auth-complete':'正在保存凭据、关闭浏览器并校验完整环境备份…','auth-cancel':'正在取消授权…','auth-refresh':'正在立即刷新凭据；有效访问凭据仍可接单…',restart:'正在重启并核对持久状态…'};
+ progress.textContent=messages[action];document.querySelectorAll('article button').forEach(b=>b.disabled=true);
+ try{const body={slug,action};if(action==='create')body.proxy_url=proxies[slug];if(action==='auth-complete')body.state=pending[slug];
+ const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json','X-Offline-View':sessionStorage.getItem(tokenKey)},body:JSON.stringify(body)});const data=await r.json();
+ if(!r.ok){const code=data.error?.message||data.error;throw Error(labels[code]||'刷新或操作未完成，请查看账号的服务状态与刷新状态。');}
+ if(data.viewer_url){viewers[slug]=data.viewer_url;trackedAuthorization=slug;}
+ if(action==='create')delete proxies[slug];
+ if(action==='auth-complete'||action==='auth-cancel')delete pending[slug];
+ progress.textContent=data.queued?'加密备份已排队，稍后自动更新结果；不额外停止调用。':data.viewer_url?'浏览器已启动，请点击账号卡片里的「进入容器浏览器」。授权后会自动关闭浏览器、备份并检查派单条件。':'操作已完成，账号状态已更新。';
+ }catch(e){progress.textContent=e.message;}finally{working=false;await refresh(true);}
+}
+
+const accountForm=document.querySelector('#account-form');
+accountForm.addEventListener('submit',async event=>{
+ event.preventDefault();if(working)return;working=true;
+ const feedback=document.querySelector('#account-feedback'),submit=document.querySelector('#account-submit');submit.disabled=true;feedback.className='';feedback.textContent='正在保存账号记录…';
+ try{
+  const body={action:'register',slug:document.querySelector('#account-id').value,label:document.querySelector('#account-label').value,provider:document.querySelector('#account-provider').value};
+  const response=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json','X-Offline-View':sessionStorage.getItem(tokenKey)},body:JSON.stringify(body)});
+  const value=await response.json();if(!response.ok)throw Error(labels[value.error?.message||value.error]||'账号未保存，请检查配置后重试。');
+  accountForm.reset();trackedAuthorization='';showAdd(false);document.querySelector('#progress').textContent='账号已保存，请填写 SOCKS 地址并创建环境。';feedback.textContent='账号已保存。请在下方账号卡片中填写 SOCKS，继续创建环境。';
+ }catch(error){feedback.className='error';feedback.textContent=error.message;}
+ finally{working=false;submit.disabled=false;await refresh(true);}
+});

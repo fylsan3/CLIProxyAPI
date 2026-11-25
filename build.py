@@ -1,5 +1,5 @@
 """One build entrypoint for central, worker, inspectors and closed test images."""
-import argparse,hashlib,json,os,re,shutil,subprocess,tempfile
+import argparse,hashlib,json,os,re,shutil,subprocess,tempfile,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
 SOURCE=ROOT/'source'
@@ -20,6 +20,7 @@ def build(images=True):
  from build_inputs import verify_source
  verify_source(ROOT)
  check_overrides()
+ run([sys.executable,'-B',str(ROOT/'build_page.py')])
  mapping=json.loads((ROOT/'overlay-inputs.json').read_text())
  (ROOT/'overlay.json').write_text(json.dumps({'Replace':{str(SOURCE/k):str(ROOT/v) for k,v in mapping.items()}},indent=2))
  overlay=json.loads((ROOT/'overlay.json').read_text())
