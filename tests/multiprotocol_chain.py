@@ -128,6 +128,9 @@ def run():
     docker('exec',fixture,'touch','/mock/A/quota-reset');action('account-update','A')
     for stream in (False,True):
      body={'model':model,'max_tokens':64,'system':[{'type':'text','text':'SYSTEM_KEEP_测试_timezone=UTC'}],'messages':[{'role':'user','content':'MESSAGE_KEEP_测试'}],'stream':stream}
+     for owner in ('A','B'):
+      arm={'id':uuid.uuid4().hex[:24],'expires':int(time.time())+60,'input_sha256':hashlib.sha256(json.dumps(body).encode()).hexdigest()}
+      subprocess.run(CLI+['exec','--user','1001:1001','-i',cards[owner]['container'],'python3','-c',"import sys,os;from pathlib import Path;os.umask(0o077);Path('/state/model-sample-arm.json').write_text(sys.stdin.read())"],input=json.dumps(arm),text=True,check=True)
      code,raw=request('/v1/messages',body);assert code==200,(code,raw[:200])
     seen_system=0
     for owner in ('A','B'):
@@ -140,6 +143,37 @@ def run():
     assert seen_system==2,seen_system
     report['cases']['system_text_retained_nonstream_and_stream']=True
     report['cases']['newapi_reads_central_only']=True
+    docker('exec',fixture,'touch','/mock/A/usage-denied');action('account-update','A');docker('exec',fixture,'rm','/mock/A/usage-denied')
+    archive_reports=[]
+    for owner in ('A','B'):
+     code="""import sys,json;from pathlib import Path
+sys.path.insert(0,'/opt/native');import http_archive
+root=Path('/state/http-samples');out=[]
+if root.exists():
+ key=http_archive.private_file(Path('/state/http-capture.key'))
+ for sample in root.iterdir():
+  manifest=json.loads((sample/'sample.json').read_text())
+  for folder in sample.iterdir():
+   if not folder.is_dir():continue
+   req,res,body,reply=http_archive.load_exchange(folder,key)
+   result=http_archive.replay(folder,key)
+   headers=http_archive.normalized(http_archive.pairs(req['wire_headers']))
+   assert headers.get('authorization') and headers.get('host') and headers.get('user-agent')
+   if manifest['kind']=='account-update':
+    assert req['method']=='GET' and body==b''
+    if '/usage?' in req['url'] and res['status']==200:assert b'must-not-export' in reply and b'cedar_ember' in reply
+   out.append({'kind':manifest['kind'],'method':req['method'],'status':res['status'],'request_header_names':sorted(headers),'replay':result})
+print(json.dumps(out))
+"""
+     result=subprocess.run(CLI+['exec','--user','1001:1001','-i',cards[owner]['container'],'python3','-c',code],capture_output=True,text=True,timeout=40)
+     assert result.returncode==0,result.stderr[-2000:]
+     archive_reports.extend(json.loads(result.stdout))
+    assert sum(x['kind']=='account-update' for x in archive_reports)==6,archive_reports
+    assert sum(x['kind']=='marked-model-request' for x in archive_reports)==2,archive_reports
+    assert any(x['kind']=='account-update' and x['status']==403 for x in archive_reports)
+    report['cases']['complete_encrypted_control_and_model_http_replay']=True
+    report['archive_replay']=archive_reports
+
    if not extra_only and not quota_only:
     for owner in ('A','B'):
      for candidate in ('A','B'):assert management('PATCH','/credentials/status',{'name':candidate.lower(),'disabled':candidate!=owner})[0]==200

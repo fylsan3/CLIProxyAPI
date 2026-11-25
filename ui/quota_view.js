@@ -74,6 +74,8 @@ function renderAccountQuota(parent,p){
  for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
  const observation=p.state?.account_observation;
  for(const [key,label] of [['profile','档位'],['usage','额度']])if(observation?.[key]?.error)text(wrap,'p',label+'查询失败；'+(observation[key].observed_at?'显示上次成功结果。':'尚无结果。'),'status-bad');
+ const capture=observation?.capture;
+ if(capture)text(wrap,'p',capture.state==='complete'?'本次完整 HTTP 样本已加密保存 · '+capture.id:'本次 HTTP 样本未完整保存，不能用于完整重放。',capture.state==='complete'?'help':'status-bad');
  text(wrap,'p','上次观测结果；到重置时间后需更新确认。','help');
 }
 

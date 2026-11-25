@@ -256,10 +256,14 @@ func (p *providerHeaderCapture) get() http.Header {
 func (t *providerTransport) send(request, source *http.Request) (*http.Response, error) {
 	var res *http.Response
 	var err error
+	next := t.base.RoundTrip
+	if archive, ok := source.Context().Value(httpArchiveKey{}).(*httpArchive); ok {
+		next = func(r *http.Request) (*http.Response, error) { return archive.send(r, t.base.RoundTrip) }
+	}
 	if sample, ok := source.Context().Value(modelSampleKey{}).(*modelSample); ok && (source.URL.Path == "/v1/messages" || source.URL.Path == "/v1/messages/count_tokens") {
-		res, err = sample.send(request, t.base.RoundTrip)
+		res, err = sample.send(request, next)
 	} else {
-		res, err = t.base.RoundTrip(request)
+		res, err = next(request)
 	}
 	if res != nil && (source.URL.Path == "/v1/messages" || source.URL.Path == "/v1/messages/count_tokens") {
 		if capture, ok := source.Context().Value(providerHeadersKey{}).(*providerHeaderCapture); ok {
@@ -905,6 +909,13 @@ func (w *worker) messages(out http.ResponseWriter, req *http.Request) {
 	ctx = context.WithValue(ctx, providerHeadersKey{}, capture)
 	if sample := claimModelSample("/state", raw, req.Header.Get("X-Offline-Run"), req.Header.Get("X-Offline-Attempt")); sample != nil {
 		ctx = context.WithValue(ctx, modelSampleKey{}, sample)
+		if archive, err := newHTTPArchive("/state", "marked-model-request"); err == nil {
+			ctx = context.WithValue(ctx, httpArchiveKey{}, archive)
+			sampleJSON(filepath.Join(sample.dir, "protected-archive.json"), map[string]any{"archive_id": archive.id, "encrypted": true})
+		} else {
+			sampleJSON(filepath.Join(sample.dir, "protected-archive.json"), map[string]any{"state": "unavailable"})
+		}
+
 	}
 	w.manager.SetConfig(cfg)
 	ctx = context.WithValue(ctx, "cliproxy.roundtripper", http.RoundTripper(w.transport))

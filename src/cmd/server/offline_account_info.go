@@ -208,6 +208,12 @@ func (w *worker) updateAccount(out http.ResponseWriter, req *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	result["attempted_at"] = now
+	archive, archiveErr := newHTTPArchive("/state", "account-update")
+	captureContext := req.Context()
+	if archiveErr == nil {
+		captureContext = context.WithValue(captureContext, httpArchiveKey{}, archive)
+	}
+
 	type item struct {
 		kind string
 		raw  []byte
@@ -219,7 +225,7 @@ func (w *worker) updateAccount(out http.ResponseWriter, req *http.Request) {
 		wg.Add(1)
 		go func(kind string) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(req.Context(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(captureContext, 15*time.Second)
 			defer cancel()
 			b, e := w.service.FetchContainerAccountResource(ctx, token.AccessToken, kind)
 			ch <- item{kind, b, e}
@@ -252,6 +258,10 @@ func (w *worker) updateAccount(out http.ResponseWriter, req *http.Request) {
 			}
 		}
 		result[item.kind] = previous
+	}
+	result["capture"] = map[string]any{"state": "unavailable"}
+	if archive != nil {
+		result["capture"] = archive.status()
 	}
 	b, e := json.Marshal(result)
 	if e == nil {
