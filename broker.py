@@ -5,7 +5,7 @@ from pathlib import Path
 from runtime_guard import check_container,check_volume,PolicyError,body_object
 from storage_guard import private_directory,private_file,prepare_socket,socket_permissions
 from lifecycle import Lease,RequestWatch,finish_process
-from accounting import UsageObserver,summarize
+from accounting import UsageObserver,native_usage_observation,summarize
 from message_body import read_message
 from header_policy import request_headers,response_headers
 from version import release_info
@@ -122,7 +122,7 @@ class Broker:
             if state.get('authorized'):self.observe_backup_revision(owner,state.get('revision',0))
             identity=self.metadata.bind(owner.lower(),state.get('account_identity'))
             if identity:result['identity']=identity;result['label']=identity.get('email') or '已授权账号'
-            issue=state.get('dispatch_issue')
+            issue='account_disabled' if self.metadata.route(owner.lower()).get('disabled') else state.get('dispatch_issue')
             reason=('authorization_pending' if issue=='authorization_required' and state.get('authorization_pending') else issue or ('offline_ready' if self.offline_only else 'account_ready'))
             return dict(result,state=state,reason=reason,ready=not issue,dispatch_mode='direct' if not issue else 'blocked')
         except (PolicyError,ValueError) as error:
@@ -341,7 +341,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.headers.get('X-Test-Model',body.get('model')) not in PROVIDERS[broker.registry.get(slug)['provider']]['models']:return self.answer(400,{'error':'model_not_bound_to_account'})
         run=self.headers.get('X-Test-Request','')
         if not re.fullmatch('[0-9a-f]{32}',run):return self.answer(400,{'error':'request_id_required'})
-        attempt=uuid.uuid4().hex;stream=self.path=='/v1/messages' and body.get('stream') is True;sent=False;done=False;completed=False
+        attempt=uuid.uuid4().hex;stream=self.path=='/v1/messages' and (self.headers.get('X-Offline-Stream')=='true' or body.get('stream') is True);sent=False;done=False;completed=False
         input_hash=hashlib.sha256(json.dumps(body).encode()).hexdigest()
         with broker.connect() as db:db.execute('INSERT INTO attempts(id,run,owner,state,started,input_sha256,ingress_sha256) VALUES(?,?,?,?,?,?,?)',(attempt,run,owner,'preparing',int(time.time()),input_hash,hashlib.sha256(raw).hexdigest()))
         state=broker.status(owner);ident=state.get('container')
@@ -351,11 +351,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.answer(503,{'error':{'message':reason}})
         with broker.connect() as db:db.execute("UPDATE attempts SET state='running',container=? WHERE id=?",(ident,attempt))
         receipt_host=broker.inspect(owner)['Config']['Hostname']
-        observer=UsageObserver(stream);status=None
+        observer=UsageObserver(stream);status=None;native_usage=''
         process=None;watch=None
         try:
             process=subprocess.Popen(CLI+['exec','--user','1001:1001','-i',ident,'/opt/native/worker','call'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-            process.stdin.write(json.dumps({'path':self.path,'body':body,'headers':request_headers(self.headers),'execution_config':self.headers.get('X-Offline-Execution-Config',''),'run':run,'attempt':attempt,'watch_input':True}).encode()+b'\n');process.stdin.flush()
+            process.stdin.write(json.dumps({'path':self.path,'body':body,'headers':request_headers(self.headers),'execution_config':self.headers.get('X-Offline-Execution-Config',''),'alt':self.headers.get('X-Offline-Alt',''),'model':self.headers.get('X-Offline-Model',''),'stream':stream,'source_format':self.headers.get('X-Offline-Source-Format',''),'response_format':self.headers.get('X-Offline-Response-Format',''),'run':run,'attempt':attempt,'watch_input':True}).encode()+b'\n');process.stdin.flush()
             watch=RequestWatch(self.connection,process,broker.stopping)
             first=json.loads(process.stdout.readline());status=first['status'];headers=first.get('headers',{})
             output=bytearray();digest=hashlib.sha256()
@@ -364,8 +364,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 for key,values in response_headers(headers).items():
                     for value in values:self.send_header(key,value)
                 self.send_header('X-Test-Container',ident);self.send_header('X-Test-Attempt',attempt)
-                if chunked:self.send_header('Transfer-Encoding','chunked')
-                else:self.send_header('Content-Length',str(len(output)));self.send_header('X-Test-Response-SHA256',digest.hexdigest())
+                if chunked:self.send_header('Transfer-Encoding','chunked');self.send_header('Trailer','X-Offline-Native-Usage')
+                elif native_usage:self.send_header('X-Offline-Native-Usage',native_usage)
+                if not chunked:self.send_header('Content-Length',str(len(output)));self.send_header('X-Test-Response-SHA256',digest.hexdigest())
                 self.end_headers()
             if stream and status==200:begin(True);sent=True
             for line in process.stdout:
@@ -378,11 +379,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 elif frame.get('done'):
                     if (frame.get('owner'),frame.get('container'),frame.get('run'),frame.get('attempt'),frame.get('response_sha256'))!=(owner,receipt_host,run,attempt,digest.hexdigest()):raise PolicyError('receipt_mismatch')
                     if frame.get('input_sha256')!=input_hash:raise PolicyError('input_receipt_mismatch')
+                    native_usage=frame.get('native_usage','')
+                    if not isinstance(native_usage,str) or len(native_usage)>44000 or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' for c in native_usage):raise PolicyError('invalid_usage_receipt')
                     done=True
             if process.wait()!=0 or not done or watch.cancelled.is_set():raise PolicyError('worker_interrupted')
-            with broker.connect() as db:db.execute("UPDATE attempts SET state='completed',status=?,response=?,usage=? WHERE id=?",(status,digest.hexdigest(),json.dumps(observer.finish(True,status)),attempt))
+            with broker.connect() as db:db.execute("UPDATE attempts SET state='completed',status=?,response=?,usage=? WHERE id=?",(status,digest.hexdigest(),json.dumps(native_usage_observation(native_usage,observer.finish(True,status),status)),attempt))
             completed=True
-            if sent:self.wfile.write(b'0\r\n\r\n');self.wfile.flush()
+            if sent:self.wfile.write(b'0\r\n'+(('X-Offline-Native-Usage: '+native_usage+'\r\n').encode() if native_usage else b'')+b'\r\n');self.wfile.flush()
             else:begin(False);self.wfile.write(output)
         except (OSError,ValueError,KeyError,PolicyError,subprocess.SubprocessError):
             with broker.connect() as db:

@@ -57,6 +57,7 @@ func (h *Handler) ContainerCredentials(c *gin.Context) {
 			Reason   string
 			Identity struct{ Email string }
 			Routing  map[string]any
+			State    map[string]any
 		}
 	}
 	if json.Unmarshal(b, &data) != nil {
@@ -85,6 +86,10 @@ func (h *Handler) ContainerCredentials(c *gin.Context) {
 			label = project.Label
 		}
 		item := gin.H{"id": a.ID, "name": project.Slug, "auth_index": a.Index, "type": "claude", "provider": "claude", "label": label, "email": project.Identity.Email, "status": status, "status_message": message, "disabled": a.Disabled, "unavailable": unavailable, "runtime_only": false, "source": "container", "size": 0, "priority": project.Routing["priority"], "weight": project.Routing["weight"], "route_revision": project.Routing["revision"], "success": a.Success, "failed": a.Failed}
+		// Worker publishes only explicitly sanitized, non-secret observations.
+		item["container_observation"] = project.State["account_observation"]
+		item["quota"] = project.State["quota_observation"]
+		item["container_capabilities"] = gin.H{"version": 1, "account_update": true, "token_refresh": true, "reset_grant": false}
 		if !retry.IsZero() {
 			item["next_retry_after"] = retry
 		}
@@ -198,4 +203,36 @@ func (h *Handler) ContainerResetQuota(c *gin.Context) {
 	}
 	native := &Handler{authManager: p.manager}
 	native.ResetQuota(c)
+}
+
+func (h *Handler) ContainerCredentialStatus(c *gin.Context) {
+	if os.Getenv("CPA_CONTAINER_ROUTING") != "1" {
+		h.PatchAuthFileStatus(c)
+		return
+	}
+	var body struct {
+		Name      string `json:"name"`
+		Disabled  *bool  `json:"disabled"`
+		AuthIndex string `json:"auth_index"`
+	}
+	if c.ShouldBindJSON(&body) != nil || !validProjectSlug(body.Name) || body.Disabled == nil {
+		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+	p := h.isolatedProjectPool()
+	if err := p.registerFixtures(c.Request.Context()); err != nil {
+		c.Status(503)
+		return
+	}
+	a, ok := p.manager.GetByID(p.executor.namespace + body.Name)
+	if !ok || (body.AuthIndex != "" && body.AuthIndex != a.Index) {
+		c.JSON(409, gin.H{"error": "account_binding_mismatch"})
+		return
+	}
+	code, data, err := h.containerMetadata(c.Request.Context(), "route-update", gin.H{"slug": body.Name, "changes": gin.H{"disabled": *body.Disabled}})
+	if err != nil {
+		c.Status(503)
+		return
+	}
+	c.Data(code, "application/json", data)
 }

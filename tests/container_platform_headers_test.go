@@ -2,6 +2,10 @@ package main
 
 import (
 	"io"
+"os"
+"encoding/json"
+"crypto/sha256"
+"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,6 +45,7 @@ func TestActualContainerAndWire(t *testing.T) {
 		machine.WriteByte(byte(c))
 	}
 	wantOS, wantArch := normalizeContainerPlatform(system.String(), machine.String())
+ frozenPlatformOS, frozenPlatformArch = wantOS, wantArch
 	if wantOS == "Unknown" || wantArch == "unknown" {
 		t.Fatal("test container platform is unknown")
 	}
@@ -100,4 +105,18 @@ func TestOAuthHeadersRemainSeparate(t *testing.T) {
 			t.Fatal("OAuth handling changed")
 		}
 	}
+}
+
+func TestBaselineRestorationAndMismatch(t *testing.T) {
+ b,err:=os.ReadFile("/etc/os-release");if err!=nil { t.Fatal(err) }; sum:=sha256.Sum256(b)
+ record:=map[string]any{"runtime":map[string]any{"architecture":"aarch64","os_release_sha256":hex.EncodeToString(sum[:])}}
+ write:=func(){ raw,_:=json.Marshal(record);if err:=os.WriteFile("/state/retention.json",raw,0600);err!=nil { t.Fatal(err) } }
+ write();if err:=loadContainerPlatformBaseline();err!=nil {t.Fatal(err)}
+ firstOS,firstArch:=containerPlatformHeaders();frozenPlatformOS="";frozenPlatformArch=""
+ if err:=loadContainerPlatformBaseline();err!=nil {t.Fatal(err)}
+ if frozenPlatformOS!=firstOS || frozenPlatformArch!=firstArch {t.Fatal("restored baseline changed")}
+ record["runtime"].(map[string]any)["architecture"]="x86_64";write()
+ if loadContainerPlatformBaseline()==nil {t.Fatal("architecture mismatch accepted")}
+ record["runtime"].(map[string]any)["architecture"]="aarch64";record["runtime"].(map[string]any)["os_release_sha256"]="wrong";write()
+ if loadContainerPlatformBaseline()==nil {t.Fatal("OS mismatch accepted")}
 }

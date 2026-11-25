@@ -68,3 +68,16 @@ def summarize(rows):
         if state=='confirmed':
             for key,number in value['values'].items():totals[key]=totals.get(key,0)+number;coverage[key]=coverage.get(key,0)+1
     return {'totals':totals,'field_coverage':coverage,'attempt_counts':counts,'note':'provider_reported_not_billing'}
+
+def native_usage_observation(encoded,fallback,status):
+    if not encoded:return fallback
+    import base64
+    try:
+        if len(encoded)>44000:return {'state':'invalid','values':{},'source':'native_cpa_reporter'}
+        value=json.loads(base64.b64decode(encoded+'='*(-len(encoded)%4),validate=True))
+        fields={'InputTokens':'input_tokens','OutputTokens':'output_tokens','CacheCreationTokens':'cache_creation_input_tokens','CacheReadTokens':'cache_read_input_tokens'}
+        counts={target:value[source] for source,target in fields.items()}
+        if any(type(n) is not int or not 0<=n<=2**53-1 for n in counts.values()):raise ValueError('invalid native counts')
+        state='unreported' if not any(counts.values()) and fallback['state']=='unreported' else 'confirmed' if status==200 else 'partial'
+        return {'state':state,'values':counts,'source':'native_cpa_reporter'}
+    except (ValueError,KeyError,TypeError):return {'state':'invalid','values':{},'source':'native_cpa_reporter'}

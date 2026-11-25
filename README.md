@@ -1,4 +1,4 @@
-> 当前候选：mac-production3 / accounts-ui12。账号管理整合范围和待真实验证项目见 [ACCOUNT_MANAGEMENT_RELEASE_CN.md](ACCOUNT_MANAGEMENT_RELEASE_CN.md)。以下旧阶段记录保留供追溯。
+> 当前源码候选：container-native4（未部署）。NewAPI 对接、多协议与 OS/架构基线见 [NEWAPI_CONTAINER_INTEGRATION_CN.md](NEWAPI_CONTAINER_INTEGRATION_CN.md)。本机生产仍为上一发布版本；以下旧阶段记录供追溯。
 
 # CPA container runtime — source snapshot
 

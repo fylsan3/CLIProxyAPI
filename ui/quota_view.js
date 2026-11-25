@@ -32,8 +32,18 @@ function subscriptionLabel(state){
 function accountQuotaWindows(state){
  const active=state?.account_observation?.usage,passive=state?.quota_observation;
  const headers=Object.fromEntries(Object.entries(passive?.signals||{}).map(([k,v])=>[k.toLowerCase(),v]));
- return [['five_hour','5h','5 小时'],['seven_day','7d','7 天']].map(([key,short,label])=>{
-  const value=active?.values?.[key],prefix='anthropic-ratelimit-unified-'+short+'-';
+ const definitions=[['five_hour','5h','5 小时'],['seven_day','7d','7 天']];
+ for(const [key,short,label] of [['seven_day_opus','7d_opus','Opus · 7 天'],['seven_day_sonnet','7d_sonnet','Sonnet · 7 天'],['seven_day_oi','7d_oi','Fable 5 · 7 天']]) {
+  if(active?.values?.[key]||headers['anthropic-ratelimit-unified-'+short+'-utilization']!==undefined)definitions.push([key,short,label]);
+ }
+ const limits=Array.isArray(active?.values?.limits)?active.values.limits:[];
+ const fables=limits.filter(x=>x?.kind==='weekly_scoped'&&/^fable( 5)?$/i.test(x.scope?.model?.display_name||''));
+ const fable=fables.find(x=>x.is_active===true)||fables[0];
+ const legacy=active?.values?.iguana_necktie;
+ const fableValue=fable?{utilization:fable.percent,resets_at:fable.resets_at}:legacy&&!['limit_dollars','used_dollars','remaining_dollars'].some(k=>legacy[k]!==undefined)?legacy:undefined;
+ if(fableValue&&!definitions.some(x=>x[0]==='seven_day_oi'))definitions.push(['seven_day_oi','7d_oi','Fable 5 · 7 天']);
+ return definitions.map(([key,short,label])=>{
+  const value=key==='seven_day_oi'?(fableValue||active?.values?.[key]):active?.values?.[key],prefix='anthropic-ratelimit-unified-'+short+'-';
   const ratio=headers[prefix+'utilization'],n=ratio!==undefined&&String(ratio).trim()!==''?Number(ratio):NaN;
   const valid=Number.isFinite(n)&&n>=0&&n<=1;
   if(value&&(!valid||!Number.isFinite(Date.parse(passive?.observed_at||''))||Date.parse(active.observed_at)>=Date.parse(passive?.observed_at||'')))return {label,percent:value.utilization,reset:value.resets_at,stamp:active.observed_at,source:'资料查询'};

@@ -55,7 +55,7 @@ func (s *Server) registerManagementV8Routes() {
 	v8.DELETE("/credentials", s.mgmt.DeleteAuthFileV8)
 	v8.GET("/credentials/models", s.mgmt.ContainerCredentialModels)
 	v8.GET("/credentials/download", s.mgmt.DownloadAuthFile)
-	v8.PATCH("/credentials/status", s.mgmt.PatchAuthFileStatus)
+	v8.PATCH("/credentials/status", s.mgmt.ContainerCredentialStatus)
 	v8.PATCH("/credentials/fields", s.mgmt.ContainerCredentialFields)
 	v8.POST("/credentials/refresh", s.mgmt.RefreshAuthFiles)
 	v8.POST("/credentials/verify", s.mgmt.VerifyAuthFileV8)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,8 +79,8 @@ func (s *Server) setupRoutes() {
 			c.Set(handlers.ModelDetailIDContextKey, strings.TrimPrefix(c.Param("model"), "/"))
 			s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers)(c)
 		})
-		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
-		v1.POST("/completions", openaiHandlers.Completions)
+		v1.POST("/chat/completions", s.containerProtocol("chat", openaiHandlers.ChatCompletions))
+		v1.POST("/completions", s.containerProtocol("completions", openaiHandlers.Completions))
 		v1.POST("/images/generations", openaiHandlers.ImagesGenerations)
 		v1.POST("/images/edits", openaiHandlers.ImagesEdits)
 		v1.POST("/videos", openaiHandlers.XAIVideosGenerations)
@@ -91,9 +92,9 @@ func (s *Server) setupRoutes() {
 		v1.POST("/tts", openaiHandlers.XAITTS)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
-		v1.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
-		v1.POST("/responses", openaiResponsesHandlers.Responses)
-		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
+		v1.GET("/responses", s.containerProtocol("websocket", openaiResponsesHandlers.ResponsesWebsocket))
+		v1.POST("/responses", s.containerProtocol("responses", openaiResponsesHandlers.Responses))
+		v1.POST("/responses/compact", s.containerProtocol("compact", openaiResponsesHandlers.Compact))
 		v1.POST("/alpha/search", s.codexAlphaSearch)
 		v1.POST("/live", s.codexLiveHandler.Handle)
 		v1.GET("/live/:call_id", s.codexLiveHandler.HandleSideband)
@@ -155,7 +156,7 @@ func (s *Server) setupRoutes() {
 	{
 		v1beta.GET("/models", s.geminiModelsHandler(geminiHandlers))
 		v1beta.POST("/interactions", geminiHandlers.Interactions)
-		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
+		v1beta.POST("/models/*action", s.containerProtocol("gemini", geminiHandlers.GeminiHandler))
 		v1beta.GET("/models/*action", s.geminiGetHandler(geminiHandlers))
 	}
 
@@ -1615,4 +1616,36 @@ func homeModelInt64Value(model map[string]any, keys ...string) int64 {
 		}
 	}
 	return 0
+}
+
+func (s *Server) containerProtocol(kind string, original gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if os.Getenv("CPA_CONTAINER_ROUTING") != "1" {
+			original(c)
+			return
+		}
+		base := s.mgmt.NativeProtocolBase(c)
+		if base == nil {
+			return
+		}
+		switch kind {
+		case "chat":
+			openai.NewOpenAIAPIHandler(base).ChatCompletions(c)
+		case "completions":
+			openai.NewOpenAIAPIHandler(base).Completions(c)
+		case "gemini":
+			gemini.NewGeminiAPIHandler(base).GeminiHandler(c)
+		default:
+			h := openai.NewOpenAIResponsesAPIHandler(base)
+			h.AccessManager = s.accessManager
+			switch kind {
+			case "responses":
+				h.Responses(c)
+			case "compact":
+				h.Compact(c)
+			case "websocket":
+				h.ResponsesWebsocket(c)
+			}
+		}
+	}
 }

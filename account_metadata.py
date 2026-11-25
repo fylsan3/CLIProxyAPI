@@ -28,8 +28,11 @@ class Metadata:
     def route(self,slug):
         with self.lock:return self.read()['routes'].get(slug,{'priority':0,'weight':1,'revision':0})
     def patch_route(self,slug,changes,expected=None):
-        if not changes or set(changes)-{'priority','weight'}:raise ValueError('invalid_route_fields')
+        if not changes or set(changes)-{'priority','weight','disabled'}:raise ValueError('invalid_route_fields')
         for k,v in changes.items():
+            if k=='disabled':
+                if type(v) is not bool:raise ValueError('invalid_route_value')
+                continue
             if type(v) is not int or (k=='weight' and not 0<=v<=1000000) or (k=='priority' and not -(2**31)<=v<2**31):raise ValueError('invalid_route_value')
         with self.lock:
             data=self.read();old=data['routes'].get(slug,{'priority':0,'weight':1,'revision':0})

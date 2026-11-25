@@ -123,7 +123,7 @@ func (t *providerTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 // containerPlatformHeaders reads the kernel visible inside this worker container.
 // It never uses customer headers or the central controller's host environment.
-func containerPlatformHeaders() (string, string) {
+func actualContainerPlatform() (string, string) {
 	var info syscall.Utsname
 	if err := syscall.Uname(&info); err != nil {
 		return "Unknown", "unknown"
@@ -142,6 +142,38 @@ func containerPlatformHeaders() (string, string) {
 		machine.WriteByte(byte(c))
 	}
 	return normalizeContainerPlatform(system.String(), machine.String())
+}
+
+var frozenPlatformOS, frozenPlatformArch string
+
+func containerPlatformHeaders() (string, string) { return frozenPlatformOS, frozenPlatformArch }
+
+// retention.json is fixed at container creation and included in environment backups.
+// Verify the actual environment before loading any credentials; headers use this
+// verified baseline for the entire worker lifetime, never a customer's environment.
+func loadContainerPlatformBaseline() error {
+	var saved struct {
+		Runtime struct {
+			Architecture string `json:"architecture"`
+			OSHash       string `json:"os_release_sha256"`
+		} `json:"runtime"`
+	}
+	b, err := os.ReadFile("/state/retention.json")
+	if err != nil || json.Unmarshal(b, &saved) != nil {
+		return errors.New("platform_baseline_missing")
+	}
+	release, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return errors.New("platform_baseline_unreadable")
+	}
+	sum := sha256.Sum256(release)
+	actualOS, actualArch := actualContainerPlatform()
+	_, expectedArch := normalizeContainerPlatform("linux", saved.Runtime.Architecture)
+	if actualOS != "Linux" || expectedArch == "unknown" || actualArch != expectedArch || hex.EncodeToString(sum[:]) != saved.Runtime.OSHash {
+		return errors.New("platform_baseline_mismatch")
+	}
+	frozenPlatformOS, frozenPlatformArch = actualOS, expectedArch
+	return nil
 }
 
 func normalizeContainerPlatform(system, machine string) (string, string) {
@@ -800,13 +832,37 @@ func messageRequest(raw []byte, headers http.Header) (execution.Request, executi
 		Stream bool   `json:"stream"`
 	}
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' || json.Unmarshal(raw, &params) != nil || strings.TrimSpace(params.Model) == "" {
+	if len(trimmed) == 0 || trimmed[0] != '{' || json.Unmarshal(raw, &params) != nil {
 		return execution.Request{}, execution.Options{}, errors.New("invalid_message_request")
 	}
-	format := translator.FromString("claude")
+	if selected := headers.Get("X-Offline-Model"); selected != "" {
+		params.Model = selected
+	}
+	if strings.TrimSpace(params.Model) == "" {
+		return execution.Request{}, execution.Options{}, errors.New("invalid_message_request")
+	}
+	if headers.Get("X-Offline-Stream") == "true" {
+		params.Stream = true
+	}
+	source := headers.Get("X-Offline-Source-Format")
+	if source == "" {
+		source = "claude"
+	}
+	target := headers.Get("X-Offline-Response-Format")
+	if target == "" {
+		target = source
+	}
+	for _, value := range []string{source, target} {
+		switch value {
+		case "claude", "openai", "openai-response", "gemini":
+		default:
+			return execution.Request{}, execution.Options{}, errors.New("unsupported_protocol")
+		}
+	}
+	format := translator.FromString(source)
 	return execution.Request{Model: params.Model, Payload: raw, Format: format}, execution.Options{
-		Headers: util.ContainerRequestHeaders(headers), Stream: params.Stream,
-		SourceFormat: format, ResponseFormat: format, OriginalRequest: raw,
+		Headers: util.ContainerRequestHeaders(headers), Stream: params.Stream, Alt: headers.Get("X-Offline-Alt"),
+		SourceFormat: format, ResponseFormat: translator.FromString(target), OriginalRequest: raw,
 	}, nil
 }
 
@@ -840,8 +896,12 @@ func (w *worker) messages(out http.ResponseWriter, req *http.Request) {
 	}
 	defer w.activeCalls.Add(-1)
 	defer w.checkpoint()
+	usageCapture := &helps.ContainerUsageCapture{}
+	out.Header().Add("Trailer", helps.ContainerUsageHeader)
+	defer func() { out.Header().Set(helps.ContainerUsageHeader, usageCapture.Encoded()) }()
 	capture := &providerHeaderCapture{}
 	ctx := coreauth.WithRequestScopedErrorConfig(helps.WithContainerResponseMode(req.Context()), cfg)
+	ctx = helps.WithContainerUsageCapture(ctx, usageCapture)
 	ctx = context.WithValue(ctx, providerHeadersKey{}, capture)
 	if sample := claimModelSample("/state", raw, req.Header.Get("X-Offline-Run"), req.Header.Get("X-Offline-Attempt")); sample != nil {
 		ctx = context.WithValue(ctx, modelSampleKey{}, sample)
@@ -884,7 +944,15 @@ func (w *worker) messages(out http.ResponseWriter, req *http.Request) {
 			if completeSSEError(chunk.Payload) {
 				errorDelivered = true
 			}
-			if _, err = out.Write(chunk.Payload); err != nil {
+			payload := chunk.Payload
+			if execution.ResponseFormatOrSource(options).String() != "claude" {
+				payload, err = json.Marshal(map[string]any{"payload": chunk.Payload})
+				if err != nil {
+					panic(http.ErrAbortHandler)
+				}
+				payload = append(payload, '\n')
+			}
+			if _, err = out.Write(payload); err != nil {
 				return
 			}
 			if flush, ok := out.(http.Flusher); ok {
@@ -942,6 +1010,9 @@ func serve() error {
 	if provider != "mock-claude" && provider != "claude-subscription" {
 		return errors.New("provider_unavailable")
 	}
+	if err := loadContainerPlatformBaseline(); err != nil {
+		return err
+	}
 	transport := newTransport(owner)
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	service := claudeauth.NewOfflineAuth(client)
@@ -990,6 +1061,11 @@ func call() error {
 		WatchInput      bool            `json:"watch_input"`
 		Headers         http.Header     `json:"headers"`
 		ExecutionConfig string          `json:"execution_config"`
+		Model           string          `json:"model"`
+		Stream          bool            `json:"stream"`
+		Alt             string          `json:"alt"`
+		SourceFormat    string          `json:"source_format"`
+		ResponseFormat  string          `json:"response_format"`
 	}
 	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
 		return err
@@ -1024,6 +1100,13 @@ func call() error {
 		}
 		request.Header.Set(util.ContainerConfigHeader, input.ExecutionConfig)
 	}
+	request.Header.Set("X-Offline-Model", input.Model)
+	request.Header.Set("X-Offline-Alt", input.Alt)
+	if input.Stream {
+		request.Header.Set("X-Offline-Stream", "true")
+	}
+	request.Header.Set("X-Offline-Source-Format", input.SourceFormat)
+	request.Header.Set("X-Offline-Response-Format", input.ResponseFormat)
 	request.Header.Set("X-Offline-Run", input.Run)
 	request.Header.Set("X-Offline-Attempt", input.Attempt)
 	inputHash := sha256.Sum256(input.Body)
@@ -1053,7 +1136,7 @@ func call() error {
 			return readErr
 		}
 	}
-	return encoder.Encode(map[string]any{"done": true, "owner": os.Getenv("FIXTURE_OWNER"), "container": os.Getenv("HOSTNAME"), "run": input.Run, "attempt": input.Attempt, "response_sha256": hex.EncodeToString(hash.Sum(nil)), "input_sha256": hex.EncodeToString(inputHash[:])})
+	return encoder.Encode(map[string]any{"done": true, "owner": os.Getenv("FIXTURE_OWNER"), "container": os.Getenv("HOSTNAME"), "run": input.Run, "attempt": input.Attempt, "response_sha256": hex.EncodeToString(hash.Sum(nil)), "input_sha256": hex.EncodeToString(inputHash[:]), "native_usage": result.Trailer.Get(helps.ContainerUsageHeader)})
 }
 func main() {
 	log.SetOutput(io.Discard)

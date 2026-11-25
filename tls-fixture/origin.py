@@ -79,7 +79,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         record({'owner':owner,'operation':'profile' if self.path.endswith('profile') else 'roles','path':self.path,'header_names':sorted(self.headers.keys())})
         if self.path=='/api/oauth/usage':
             if fixturePath('usage-denied').exists():return self.reply(403,{'error':'fixture_usage_denied'})
-            return self.reply(200,{'five_hour':{'utilization':17,'resets_at':'2026-11-26T03:00:00Z'},'seven_day':{'utilization':42,'resets_at':'2026-11-30T03:00:00Z'}})
+            return self.reply(200,{'five_hour':{'utilization':17,'resets_at':'2026-11-26T03:00:00Z'},'seven_day':{'utilization':42,'resets_at':'2026-11-30T03:00:00Z'},'limits':[{'kind':'weekly_scoped','percent':5 if fixturePath('quota-reset').exists() else 90,'resets_at':'2026-12-03T03:00:00Z','is_active':True,'scope':{'model':{'display_name':'Fable 5','secret':'must-not-export'}},'private_field':'must-not-export'}]})
         if self.path=='/api/oauth/profile':return self.reply(200,{'account':{'uuid':'offline-account-'+owner,'email':owner+'@example.invalid'},'organization':{'uuid':'offline-org-'+owner,'name':'Offline','subscription_type':'pro','rate_limit_tier':'default_claude_pro'}})
         if self.path=='/api/oauth/claude_cli/roles':return self.reply(200,{'roles':['offline']})
         self.reply(404,{})
@@ -205,6 +205,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     ('content_block_delta',{'index':0,'delta':{'type':'text_delta','text':owner+' native OK'}}),
                     ('content_block_stop',{'index':0}),
                     ('message_delta',{'delta':{'stop_reason':'end_turn','stop_sequence':None},'usage':{'output_tokens':3}}),('message_stop',{})]
+            if case=='tool':
+                events[1]=('content_block_start',{'index':0,'content_block':{'type':'tool_use','id':'toolu_offline','name':'read_file','input':{}}})
+                events[2]=('content_block_delta',{'index':0,'delta':{'type':'input_json_delta','partial_json':'{"path":"/workspace/fixture.txt"}'}})
+                events[4]=('message_delta',{'delta':{'stop_reason':'tool_use','stop_sequence':None},'usage':{'output_tokens':3}})
             chunks=[('event: '+name+'\ndata: '+json.dumps(dict(data,type=name),separators=(',',':'))+'\n\n').encode() for name,data in events]
             kind='text/event-stream'
         if case=='large_error':

@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"io"
 	"net"
 	"net/http"
@@ -59,9 +61,10 @@ type projectPool struct {
 	appliedConfig  *config.Config
 }
 type projectExecutor struct {
-	socket    string
-	namespace string
-	transport *http.Transport
+	socket       string
+	namespace    string
+	transport    *http.Transport
+	configSource func() *config.Config
 }
 type projectHTTPError struct {
 	status  int
@@ -70,7 +73,7 @@ type projectHTTPError struct {
 }
 
 func (e *projectHTTPError) Headers() http.Header { return e.headers.Clone() }
-func (e *projectHTTPError) Error() string        { return "isolated project request failed" }
+func (e *projectHTTPError) Error() string        { return string(e.body) }
 func (e *projectHTTPError) StatusCode() int      { return e.status }
 
 var projectPools sync.Map
@@ -98,6 +101,7 @@ func (h *Handler) isolatedProjectPool() *projectPool {
 	manager.RegisterExecutor(executor)
 	pool := &projectPool{manager: manager, executor: executor, appliedConfig: cfg}
 	pool.configSource = func() *config.Config { h.mu.Lock(); defer h.mu.Unlock(); return projectRoutingConfig(h.cfg) }
+	executor.configSource = pool.configSource
 	key, _ := json.Marshal(cfg)
 	pool.configKey = string(key)
 	key, _ = json.Marshal(cfg.Routing)
@@ -201,6 +205,7 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 			Routing struct {
 				Priority int
 				Weight   int
+				Disabled bool
 			}
 			Identity struct{ Email string }
 		}
@@ -219,7 +224,7 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 		id := p.executor.namespace + project.Slug
 		if current, ok := p.manager.GetByID(id); ok {
 			priority, weight := strconv.Itoa(project.Routing.Priority), strconv.Itoa(project.Routing.Weight)
-			if current.Attributes["priority"] != priority || current.Attributes["weight"] != weight || current.Label != project.Identity.Email {
+			if current.Attributes["priority"] != priority || current.Attributes["weight"] != weight || current.Label != project.Identity.Email || current.Disabled != project.Routing.Disabled {
 				_, _, err = p.manager.Modify(ctx, id, 0, func(a *coreauth.Auth) error {
 					if a.Attributes == nil {
 						a.Attributes = map[string]string{}
@@ -227,6 +232,7 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 					a.Attributes["priority"] = priority
 					a.Attributes["weight"] = weight
 					a.Label = project.Identity.Email
+					a.Disabled = project.Routing.Disabled
 					return nil
 				})
 				if err != nil {
@@ -252,7 +258,7 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 			continue
 		}
 		registry.GetGlobalRegistry().RegisterClient(id, projectProvider, models)
-		if _, err = p.manager.Register(ctx, &coreauth.Auth{ID: id, Provider: projectProvider, Status: coreauth.StatusActive, Label: project.Identity.Email, Attributes: map[string]string{"dispatch_model": models[0].ID, "priority": strconv.Itoa(project.Routing.Priority), "weight": strconv.Itoa(project.Routing.Weight)}}); err != nil {
+		if _, err = p.manager.Register(ctx, &coreauth.Auth{ID: id, Provider: projectProvider, Status: coreauth.StatusActive, Disabled: project.Routing.Disabled, Label: project.Identity.Email, Attributes: map[string]string{"dispatch_model": models[0].ID, "priority": strconv.Itoa(project.Routing.Priority), "weight": strconv.Itoa(project.Routing.Weight)}}); err != nil {
 			registry.GetGlobalRegistry().UnregisterClient(id)
 			return err
 		}
@@ -277,7 +283,27 @@ func (e *projectExecutor) request(ctx context.Context, a *coreauth.Auth, r execu
 	if setting, ok := opts.Metadata["container_execution_config"].(string); ok {
 		req.Header.Set(util.ContainerConfigHeader, setting)
 	}
+	if req.Header.Get(util.ContainerConfigHeader) == "" && e.configSource != nil {
+		setting, configErr := util.EncodeContainerConfig(util.ContainerConfigSnapshot(e.configSource()))
+		if configErr != nil {
+			return nil, configErr
+		}
+		req.Header.Set(util.ContainerConfigHeader, setting)
+	}
+	// These fields are generated here, never accepted from client headers.
+	req.Header.Set("X-Offline-Source-Format", opts.SourceFormat.String())
+	req.Header.Set("X-Offline-Model", r.Model)
+	req.Header.Set("X-Offline-Alt", opts.Alt)
+	req.Header.Set("X-Offline-Stream", strconv.FormatBool(opts.Stream))
+	req.Header.Set("X-Offline-Response-Format", execution.ResponseFormatOrSource(opts).String())
 	run, _ := ctx.Value(projectRequestKey{}).(string)
+	if run == "" {
+		var id [16]byte
+		if _, err = rand.Read(id[:]); err != nil {
+			return nil, err
+		}
+		run = hex.EncodeToString(id[:])
+	}
 	req.Header.Set("X-Test-Request", run)
 	req.Header.Set("X-Test-Project", slug)
 	req.Header.Set("X-Test-Model", thinking.ParseSuffix(r.Model).ModelName)
@@ -300,7 +326,9 @@ func (e *projectExecutor) request(ctx context.Context, a *coreauth.Auth, r execu
 	}
 	return res, nil
 }
-func (e *projectExecutor) Execute(ctx context.Context, a *coreauth.Auth, r execution.Request, opts execution.Options) (execution.Response, error) {
+func (e *projectExecutor) Execute(ctx context.Context, a *coreauth.Auth, r execution.Request, opts execution.Options) (response execution.Response, err error) {
+	reporter := helps.NewUsageReporter(ctx, "claude", r.Model, a)
+	defer reporter.TrackFailure(ctx, &err)
 	res, err := e.request(ctx, a, r, opts)
 	if err != nil {
 		return execution.Response{}, err
@@ -310,24 +338,88 @@ func (e *projectExecutor) Execute(ctx context.Context, a *coreauth.Auth, r execu
 	if err != nil {
 		return execution.Response{}, err
 	}
+	format := execution.ResponseFormatOrSource(opts).String()
+	if format == "" {
+		format = "claude"
+	}
+	reporter.ObserveResponseModel(body)
+	if detail, ok := helps.ReadContainerUsage(res); ok {
+		reporter.Publish(ctx, detail)
+	} else {
+		reporter.Publish(ctx, helps.ParsePluginExecutorResponseUsage(format, body))
+	}
 	return execution.Response{Payload: body, Headers: res.Header}, nil
 }
 func (e *projectExecutor) ExecuteStream(ctx context.Context, a *coreauth.Auth, r execution.Request, opts execution.Options) (*execution.StreamResult, error) {
+	reporter := helps.NewUsageReporter(ctx, "claude", r.Model, a)
+	reporter.SetStream(true)
 	res, err := e.request(ctx, a, r, opts)
 	if err != nil {
+		reporter.PublishFailure(ctx, err)
 		return nil, err
 	}
 	chunks := make(chan execution.StreamChunk)
 	go func() {
 		defer close(chunks)
 		defer res.Body.Close()
+		var observed helps.StreamUsageBuffer
+		finished := false
+		defer func() {
+			if finished {
+				if detail, ok := helps.ReadContainerUsage(res); ok {
+					reporter.Publish(ctx, detail)
+					return
+				}
+				if !observed.Publish(ctx, reporter) {
+					reporter.EnsurePublished(ctx)
+				}
+			} else {
+				observed.PublishFailure(ctx, reporter, errors.New("container_stream_incomplete"))
+			}
+		}()
+		format := execution.ResponseFormatOrSource(opts).String()
+		if format == "" {
+			format = "claude"
+		}
 
+		if execution.ResponseFormatOrSource(opts).String() != "" && execution.ResponseFormatOrSource(opts).String() != "claude" {
+			decoder := json.NewDecoder(res.Body)
+			for {
+				var frame struct {
+					Payload []byte `json:"payload"`
+					Error   string `json:"error"`
+				}
+				err := decoder.Decode(&frame)
+				if err == io.EOF {
+					finished = true
+					return
+				}
+				chunk := execution.StreamChunk{Payload: frame.Payload}
+				if err != nil {
+					chunk.Err = err
+				} else if frame.Error != "" {
+					chunk.Err = errors.New(frame.Error)
+				}
+				reporter.ObserveResponseModel(frame.Payload)
+				helps.ObservePluginExecutorStreamUsage(format, frame.Payload, &observed)
+				select {
+				case chunks <- chunk:
+				case <-ctx.Done():
+					return
+				}
+				if chunk.Err != nil {
+					return
+				}
+			}
+		}
 		scanner := bufio.NewScanner(res.Body)
 		scanner.Buffer(nil, 52_428_800)
 		scanner.Split(helps.ScanSSELineWithEnding)
 		var event bytes.Buffer
 		for scanner.Scan() {
 			line := append([]byte(nil), scanner.Bytes()...)
+			reporter.ObserveResponseModel(line)
+			helps.ObservePluginExecutorStreamUsage(format, line, &observed)
 			select {
 			case chunks <- execution.StreamChunk{Payload: line}:
 			case <-ctx.Done():
@@ -351,6 +443,8 @@ func (e *projectExecutor) ExecuteStream(ctx context.Context, a *coreauth.Auth, r
 			case chunks <- execution.StreamChunk{Err: err}:
 			case <-ctx.Done():
 			}
+		} else {
+			finished = true
 		}
 
 	}()
@@ -360,7 +454,13 @@ func (e *projectExecutor) Refresh(_ context.Context, a *coreauth.Auth) (*coreaut
 	return a, nil
 }
 func (e *projectExecutor) CountTokens(ctx context.Context, a *coreauth.Auth, r execution.Request, opts execution.Options) (execution.Response, error) {
-	return e.Execute(context.WithValue(ctx, projectCountKey{}, true), a, r, opts)
+	res, err := e.request(context.WithValue(ctx, projectCountKey{}, true), a, r, opts)
+	if err != nil {
+		return execution.Response{}, err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	return execution.Response{Payload: body, Headers: res.Header}, err
 }
 func (e *projectExecutor) HttpRequest(context.Context, *coreauth.Auth, *http.Request) (*http.Response, error) {
 	return nil, errors.New("fixture supports only local Messages requests")
@@ -535,4 +635,17 @@ func (h *Handler) ContainerOAuthStart(c *gin.Context) {
 		return
 	}
 	h.StartOAuthV8(c)
+}
+
+// NativeProtocolBase retains CPA's original handlers/converters and account selector.
+func (h *Handler) NativeProtocolBase(c *gin.Context) *handlers.BaseAPIHandler {
+	p := h.isolatedProjectPool()
+	if err := p.registerFixtures(c.Request.Context()); err != nil {
+		c.JSON(503, gin.H{"error": "account_controller_unavailable"})
+		return nil
+	}
+	h.mu.Lock()
+	cfg := h.cfg.SDKConfig
+	h.mu.Unlock()
+	return handlers.NewBaseAPIHandlers(&cfg, p.manager)
 }

@@ -10,6 +10,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -66,7 +67,10 @@ func cleanUsage(raw []byte) (map[string]any, bool) {
 		return nil, false
 	}
 	result := map[string]any{}
-	for _, k := range []string{"five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"} {
+	for k := range v {
+		if !regexp.MustCompile(`^(five_hour|seven_day(_[a-z0-9_]{1,48})?|iguana_necktie)$`).MatchString(k) {
+			continue
+		}
 		item, ok := v[k].(map[string]any)
 		if !ok {
 			continue
@@ -80,9 +84,49 @@ func cleanUsage(raw []byte) (map[string]any, bool) {
 				entry["resets_at"] = s
 			}
 		}
+		for _, field := range []string{"limit_dollars", "used_dollars", "remaining_dollars"} {
+			if n, ok := item[field].(float64); ok && n >= 0 {
+				entry[field] = n
+			}
+		}
 		if len(entry) > 0 {
 			result[k] = entry
 		}
+	}
+	// Scoped limits are quota facts, not arbitrary profile or credential material.
+	if limits, ok := v["limits"].([]any); ok {
+		clean := []any{}
+		for _, raw := range limits {
+			if len(clean) >= 64 {
+				break
+			}
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			kind, _ := item["kind"].(string)
+			percent, ok := item["percent"].(float64)
+			if kind != "weekly_scoped" || !ok || percent < 0 || percent > 100 {
+				continue
+			}
+			scope, _ := item["scope"].(map[string]any)
+			model, _ := scope["model"].(map[string]any)
+			name, _ := model["display_name"].(string)
+			if name == "" || len(name) > 120 {
+				continue
+			}
+			value := map[string]any{"kind": kind, "percent": percent, "scope": map[string]any{"model": map[string]any{"display_name": name}}}
+			if active, ok := item["is_active"].(bool); ok {
+				value["is_active"] = active
+			}
+			if stamp, ok := item["resets_at"].(string); ok {
+				if _, err := time.Parse(time.RFC3339, stamp); err == nil {
+					value["resets_at"] = stamp
+				}
+			}
+			clean = append(clean, value)
+		}
+		result["limits"] = clean
 	}
 	return result, true
 }

@@ -5,6 +5,7 @@ from mac_release import Switch,copy_release,make_plist,atomic,request,wait_for
 from upgrade_accounts import migrate,rollback
 from retention import read_json,write_json
 from host_runtime import docker_cli
+from version import VERSION,release_info
 import subprocess
 ROOT=Path(__file__).resolve().parent
 
@@ -20,10 +21,11 @@ def deploy():
  for p in projects:
   if not p.get('state',{}).get('authorized') or p['state'].get('active_calls') or p['state'].get('refreshing') or p['state'].get('authorization_pending'):raise ValueError('account_not_idle')
  cfg=state/'config.yaml';cfg_hash=hashlib.sha256(cfg.read_bytes()).hexdigest()
- release=home/'releases/mac-production3';copy_release(ROOT,release)
+ release_info()
+ release=home/'releases'/(VERSION+'-'+str(int(time.time())));copy_release(ROOT,release)
  plist=Path.home()/'Library/LaunchAgents/com.local.cliproxyapi.plist';old=plistlib.loads(plist.read_bytes());args=old['ProgramArguments']
  network=Path(args[args.index('--network-config')+1]);backup=Path(args[args.index('--backup-directory')+1])
- tx=home/'transactions'/('management3-'+str(int(time.time())));switch=Switch(plist,tx,port);switch.backup();migrations=[];new_started=False
+ tx=home/'transactions'/(VERSION+'-'+str(int(time.time())));switch=Switch(plist,tx,port);switch.backup();migrations=[];new_started=False
  try:
   # Re-read just before the maintenance window; account worker checks again after shutdown.
   if any(p.get('state',{}).get('active_calls') for p in snapshot()['projects']):raise ValueError('account_became_busy')
