@@ -26,17 +26,29 @@ const cardMotion=(()=>{
  function reset(card){const r=records.get(card);if(r?.frame)cancelAnimationFrame(r.frame);if(r)r.frame=0;card.classList.remove('pointer-lit');card.style.setProperty('--tilt-x','0deg');card.style.setProperty('--tilt-y','0deg');}
  function finish(card){const r=records.get(card);if(!r?.animations)return;r.animations.forEach(a=>a.finish());r.complete?.();}
  function bind(card){const r={frame:0};records.set(card,r);visible.observe(card);
-  card.addEventListener('pointermove',e=>{if(!fine.matches||reduced.matches||e.pointerType==='touch'||r.animations)return;const x=e.clientX,y=e.clientY;if(r.frame)cancelAnimationFrame(r.frame);r.frame=requestAnimationFrame(()=>{r.frame=0;const box=card.getBoundingClientRect();const px=Math.max(0,Math.min(1,(x-box.left)/box.width)),py=Math.max(0,Math.min(1,(y-box.top)/box.height));let tx=(.5-py)*8,ty=(px-.5)*8;const scale=Math.max(1,Math.hypot(tx,ty)/4);card.style.setProperty('--light-x',px*100+'%');card.style.setProperty('--light-y',py*100+'%');card.style.setProperty('--tilt-x',tx/scale+'deg');card.style.setProperty('--tilt-y',ty/scale+'deg');card.classList.add('pointer-lit');});});
+  card.addEventListener('pointermove',e=>{if(!fine.matches||reduced.matches||e.pointerType==='touch'||r.animations||r.portal)return;const x=e.clientX,y=e.clientY;if(r.frame)cancelAnimationFrame(r.frame);r.frame=requestAnimationFrame(()=>{r.frame=0;const box=card.getBoundingClientRect();const px=Math.max(0,Math.min(1,(x-box.left)/box.width)),py=Math.max(0,Math.min(1,(y-box.top)/box.height));let tx=(.5-py)*8,ty=(px-.5)*8;const scale=Math.max(1,Math.hypot(tx,ty)/4);card.style.setProperty('--light-x',px*100+'%');card.style.setProperty('--light-y',py*100+'%');card.style.setProperty('--tilt-x',tx/scale+'deg');card.style.setProperty('--tilt-y',ty/scale+'deg');card.classList.add('pointer-lit');});});
   card.addEventListener('pointerleave',()=>reset(card));card.addEventListener('pointercancel',()=>reset(card));
  }
- function expand(card,shell,content,open){const from=shell.getBoundingClientRect().height;finish(card);reset(card);const r=records.get(card);content.hidden=false;card.classList.toggle('is-expanded',open);shell.style.height='auto';const expanded=shell.getBoundingClientRect().height;content.hidden=true;const closed=shell.getBoundingClientRect().height;content.hidden=false;
-  const complete=()=>{if(r.complete!==complete)return;r.animations?.forEach(a=>a.cancel());r.animations=null;r.complete=null;shell.style.height='';content.hidden=!open;card.classList.remove('detail-moving');};r.complete=complete;
-  if(reduced.matches){complete();return;}card.classList.add('detail-moving');
-  const small='inset(0 0 100% 70% round 16px)',large='inset(0 0 0 0 round 0px)';
-  r.animations=[shell.animate([{height:from+'px'},{height:(open?expanded:closed)+'px'}],{duration:360,easing:'cubic-bezier(.22,.8,.2,1)',fill:'both'}),content.animate([{opacity:open?0:1,clipPath:open?small:large},{opacity:open?1:0,clipPath:open?large:small}],{duration:320,easing:'cubic-bezier(.22,.8,.2,1)',fill:'both'})];
-  Promise.all(r.animations.map(a=>a.finished.catch(()=>{}))).then(complete);
+ function expand(card,shell,content,open){finish(card);reset(card);const r=records.get(card);if(!r)return;
+  if(open){
+   if(r.portal)return;
+   const origin=card.getBoundingClientRect(),slot=document.createElement('div');slot.className='account-slot';slot.dataset.account=card.dataset.account;slot.dataset.search=card.dataset.search;slot.style.height=origin.height+'px';slot.setAttribute('aria-hidden','true');card.before(slot);
+   const portal=document.createElement('dialog');portal.className='detail-portal';portal.setAttribute('aria-label',(card.querySelector('h2')?.textContent||'账号')+' · 详情');accounts.parentElement.append(portal);r.portal=portal;r.slot=slot;
+   portal.append(card);content.hidden=false;card.classList.add('is-expanded');portal.showModal();
+   const close=()=>card.querySelector('.detail-toggle')?.click();portal.addEventListener('cancel',e=>{e.preventDefault();close();});portal.addEventListener('click',e=>{if(e.target===portal){const b=card.getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)close();}});
+   const dest=card.getBoundingClientRect();const from=`translate(${origin.left-dest.left}px,${origin.top-dest.top}px) scale(${origin.width/dest.width},${origin.height/dest.height})`;
+   animate(card,r,from,'none',true,()=>{card.querySelector('.detail-toggle')?.focus({preventScroll:true});});
+  }else if(r.portal){
+   const current=card.getBoundingClientRect(),dest=r.slot.getBoundingClientRect();const to=`translate(${dest.left-current.left}px,${dest.top-current.top}px) scale(${dest.width/current.width},${dest.height/current.height})`;
+   animate(card,r,'none',to,false,()=>{const portal=r.portal;r.slot.before(card);r.slot.remove();r.slot=null;r.portal=null;portal.close();portal.remove();content.hidden=true;shell.hidden=true;card.classList.remove('is-expanded');card.querySelector('.detail-toggle')?.focus({preventScroll:true});});
+  }else{content.hidden=true;shell.hidden=true;card.classList.remove('is-expanded');}
  }
- function remove(card){finish(card);reset(card);visible.unobserve(card);records.delete(card);}
+ function animate(card,r,from,to,open,done){
+  const complete=()=>{if(r.complete!==complete)return;r.animations?.forEach(a=>a.cancel());r.animations=null;r.complete=null;card.classList.remove('detail-moving');done();};r.complete=complete;
+  if(reduced.matches){complete();return;}card.classList.add('detail-moving');
+  r.animations=[card.animate([{transform:from},{transform:to}],{duration:open?380:280,easing:'cubic-bezier(.22,.8,.2,1)',fill:'both'})];Promise.all(r.animations.map(a=>a.finished.catch(()=>{}))).then(complete);
+ }
+ function remove(card){finish(card);reset(card);const r=records.get(card);if(r?.portal){r.portal.close();r.portal.remove();r.slot?.remove();}visible.unobserve(card);records.delete(card);}
  const owner=accounts.ownerDocument;function visibility(){accounts.classList.toggle('motion-paused',owner.hidden);if(owner.hidden)records.forEach((_,c)=>reset(c));}
  owner.addEventListener('visibilitychange',visibility);const onReduce=()=>records.forEach((_,c)=>{reset(c);finish(c);});reduced.addEventListener('change',onReduce);window.addEventListener('blur',onReduce);
  const cleanup=()=>{records.forEach((_,c)=>remove(c));visible.disconnect();owner.removeEventListener('visibilitychange',visibility);reduced.removeEventListener('change',onReduce);window.removeEventListener('blur',onReduce);};
@@ -45,10 +57,11 @@ const cardMotion=(()=>{
 })();
 
 const expandedAccounts=new Set();let currentProjects=[];
-function filterAccounts(){const q=document.querySelector('#account-search').value.trim().toLocaleLowerCase();let shown=0;for(const card of accounts.querySelectorAll('.account-card')){card.hidden=!card.dataset.search.includes(q);if(!card.hidden)shown++;}const empty=document.querySelector('#search-empty');if(empty)empty.hidden=!currentProjects.length||shown>0;}
+function filterAccounts(){const q=document.querySelector('#account-search').value.trim().toLocaleLowerCase();let shown=0;for(const card of accounts.querySelectorAll('.account-card,.account-slot')){card.hidden=!card.dataset.search.includes(q);if(!card.hidden)shown++;}const empty=document.querySelector('#search-empty');if(empty)empty.hidden=!currentProjects.length||shown>0;}
 document.querySelector('#add-account').onclick=()=>showAdd();document.querySelector('#cancel-add').onclick=()=>showAdd(false);document.querySelector('#account-search').addEventListener('input',filterAccounts);
 function renderCard(p,data){
- let card=[...accounts.querySelectorAll('.account-card')].find(c=>c.dataset.account===p.slug);
+ let card=[...document.querySelectorAll('.account-card')].find(c=>c.dataset.account===p.slug);
+ const detailScroll=card?.querySelector('.account-detail')?.scrollTop||0;
  if(!card){card=text(accounts,'article','','account-card');card.dataset.account=p.slug;cardMotion.bind(card);}else{cardMotion.finish(card);for(const child of [...card.children])if(!child.classList.contains('border-beam'))child.remove();}
  card.classList.toggle('has-issue',accountTone(p)==='status-bad'||p.network?.healthy===false||!!p.network?.timezone_warning||!!p.state?.storage_warning||!!p.portable_backup?.warning);
  const beam=card.querySelector('.border-beam')||text(card,'span','','border-beam');beam.setAttribute('aria-hidden','true');
@@ -56,7 +69,8 @@ function renderCard(p,data){
  const main=text(card,'div','','card-main'),heading=text(main,'div','','card-heading'),title=text(heading,'div','','account-title');
  text(title,'h2',p.label||p.slug);text(title,'p',p.slug+' · '+(data.providers?.[p.provider]?.label||p.provider),'muted');
  const needsAuth=['authorization_required','authorization_pending'].includes(p.reason);
- text(heading,'span',p.overall_ready?'可接单':p.protection?.phase==='creating'?'创建中':p.protection?.phase==='creation_failed'?'创建失败':p.reason==='missing'?'待创建环境':p.reason==='authorization_pending'?'等待授权':p.reason==='authorization_required'?'需要授权':'暂停接单','badge '+accountTone(p));
+ const headingActions=text(heading,'div','','card-heading-actions');
+ text(headingActions,'span',p.overall_ready?'可接单':p.protection?.phase==='creating'?'创建中':p.protection?.phase==='creation_failed'?'创建失败':p.reason==='missing'?'待创建环境':p.reason==='authorization_pending'?'等待授权':p.reason==='authorization_required'?'需要授权':'暂停接单','badge '+accountTone(p));
  const protection=p.protection||{phase:'not_created'},backup=p.portable_backup,central=p.central_dispatch||{reason:'unknown'};
  const centralLabels={eligible:'调度条件满足',cooldown:'中央冷却中',disabled:'中央已停用',unavailable:'中央暂不可用',unknown:'中央状态无法读取'};
  const facts=text(main,'dl','','card-facts');fact(facts,'容器状态',p.protection?.phase==='creating'?'正在准备环境':p.protection?.phase==='creation_failed'?'创建未完成':p.reason==='missing'?'尚未创建':labels[p.reason]||'状态待确认',accountTone(p));fact(facts,'账号网络',p.network?(p.network.healthy?'检查通过':'检查未通过'): '等待检查',p.network?(p.network.healthy?'status-ok':'status-bad'):'');fact(facts,'活动请求',p.state?.active_calls??'—');
@@ -82,11 +96,12 @@ function renderCard(p,data){
  if(['backup_failed','recovery_check_failed'].includes(protection.phase)||(p.state?.authorized&&!protection.backup_verified))action(actions,'retry-backup','重试环境备份');
  if(!actions.children.length)actions.hidden=true;
  const details=text(card,'section','','account-detail');
- const toggle=text(details,'button',expandedAccounts.has(p.slug)?'收起详情':'详情','detail-toggle secondary');
- toggle.dataset.focusId=p.slug+':details';toggle.setAttribute('aria-expanded',String(expandedAccounts.has(p.slug)));toggle.setAttribute('aria-controls','details-'+p.slug);toggle.setAttribute('aria-label',(p.label||p.slug)+' · '+(expandedAccounts.has(p.slug)?'收起详情':'详情'));
+ const toggle=text(headingActions,'button',expandedAccounts.has(p.slug)?'关闭详情':'详情','detail-toggle secondary');
+ toggle.dataset.focusId=p.slug+':details';toggle.setAttribute('aria-expanded',String(expandedAccounts.has(p.slug)));toggle.setAttribute('aria-controls','details-'+p.slug);toggle.setAttribute('aria-label',(p.label||p.slug)+' · '+(expandedAccounts.has(p.slug)?'关闭详情':'详情'));
+ details.hidden=!expandedAccounts.has(p.slug);
  const content=text(details,'div','','detail-content');content.id='details-'+p.slug;content.hidden=!expandedAccounts.has(p.slug);card.classList.toggle('is-expanded',!content.hidden);
- function showDetails(open){if(open)expandedAccounts.add(p.slug);else expandedAccounts.delete(p.slug);toggle.textContent=open?'收起详情':'详情';toggle.setAttribute('aria-label',(p.label||p.slug)+' · '+toggle.textContent);toggle.setAttribute('aria-expanded',String(open));cardMotion.expand(card,details,content,open);}
- toggle.onclick=()=>showDetails(!expandedAccounts.has(p.slug));details.onkeydown=e=>{if(e.key==='Escape'&&expandedAccounts.has(p.slug)){e.preventDefault();showDetails(false);toggle.focus({preventScroll:true});}};
+ function showDetails(open){details.hidden=false;if(open)expandedAccounts.add(p.slug);else expandedAccounts.delete(p.slug);toggle.textContent=open?'关闭详情':'详情';toggle.setAttribute('aria-label',(p.label||p.slug)+' · '+toggle.textContent);toggle.setAttribute('aria-expanded',String(open));cardMotion.expand(card,details,content,open);}
+ toggle.onclick=()=>showDetails(!expandedAccounts.has(p.slug));card.onkeydown=e=>{if(e.key==='Escape'&&expandedAccounts.has(p.slug)){e.preventDefault();showDetails(false);toggle.focus({preventScroll:true});}};
  let section=detail(content,'环境与网络');
  text(section,'p','容器编号：'+(p.container?p.container.slice(0,12):'未创建'));text(section,'p','中央调度：'+(centralLabels[central.reason]||'未知'),central.reason==='eligible'?'status-ok':'status-bad');
  if(p.container){
@@ -104,7 +119,7 @@ function renderCard(p,data){
  section=detail(content,'上游额度观测');for(const line of quotaLines(p.state?.quota_observation))text(section,'p',line);
  section=detail(content,'已确认用量');if(p.usage){const u=p.usage;text(section,'p','输入：'+(u.totals.input_tokens??'未报告')+' · 输出：'+(u.totals.output_tokens??'未报告'));const counts=text(section,'p','');for(const [key,label] of [['confirmed','完整'],['partial','部分'],['unreported','未报告'],['invalid','异常']]){if(counts.childNodes.length)text(counts,'span',' · ');const n=u.attempt_counts[key];text(counts,'span',label+' '+n,n>0?(key==='confirmed'?'status-ok':key==='invalid'?'status-bad':''):'');}text(section,'p','模型报告值，不是账单；部分记录不计入合计。');}else text(section,'p','暂无用量记录。');
  section=detail(content,'最近执行记录');if(!p.attempts?.length)text(section,'p','暂无执行记录。');for(const a of p.attempts||[])text(section,'p',(results[a.state]||a.state)+' · '+a.id.slice(0,10)+(a.status?' · HTTP '+a.status:'')+(a.stop_reason?' · '+(stops[a.stop_reason]||a.stop_reason):''),attemptTone(a));
- const more=text(content,'div','','detail-actions');if(p.state?.authorized&&!p.state.refreshing)action(more,'auth-refresh','立即刷新凭据',true);if(protection.backup_verified)action(more,'backup-export','更新加密备份',true);if(['container_stopped','worker_unavailable','network_status_unknown','binding_check_failed'].includes(p.reason)&&backup?.state==='exported')action(more,'backup-restore','从加密备份恢复',true);if(!more.children.length)more.hidden=true;
+ const more=text(content,'div','','detail-actions');if(p.state?.authorized&&!p.state.refreshing)action(more,'auth-refresh','立即刷新凭据',true);if(protection.backup_verified)action(more,'backup-export','更新加密备份',true);if(['container_stopped','worker_unavailable','network_status_unknown','binding_check_failed'].includes(p.reason)&&backup?.state==='exported')action(more,'backup-restore','从加密备份恢复',true);if(!more.children.length)more.hidden=true;details.scrollTop=detailScroll;
 }
 
 async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].includes(document.activeElement?.tagName)))return;busy=true;const focusKey=document.activeElement?.dataset?.focusId;try{
@@ -117,7 +132,8 @@ async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].include
  document.querySelector('#runtime-mode').textContent=data.runtime_mode==='managed'?'运行模式：账号独立容器 · 真实订阅通道待验收':data.runtime_mode==='closed_tls_test'?'闭网 HTTPS 测试 · 官方域名由本地测试服务响应 · 没有真实账号':'闭网模拟测试 · 没有真实账号';
  if(trackedAuthorization&&!working){const current=data.projects.find(p=>p.slug===trackedAuthorization);if(current){const phase=current.protection?.phase;const progress=document.querySelector('#progress');if(phase==='ready'){progress.textContent='授权已保存，浏览器已关闭，环境备份校验通过。实际接单资格请看账号卡片。';delete viewers[trackedAuthorization];trackedAuthorization='';}else if(phase==='authorizing'){progress.textContent='正在等待容器浏览器内的授权操作；完成后自动关闭浏览器并备份。';}else if(phase){progress.textContent=protectionLabels[phase]||'正在检查授权后的环境状态。';}}}
  renderLogging(data.logging_to_file);
- for(const child of [...accounts.children])if(!child.classList.contains('account-card')||!data.projects.some(p=>p.slug===child.dataset.account)){cardMotion.remove(child);child.remove();}
+ for(const card of document.querySelectorAll('.account-card'))if(!data.projects.some(p=>p.slug===card.dataset.account)){cardMotion.remove(card);card.remove();}
+ for(const child of [...accounts.children])if(!child.matches('.account-card,.account-slot'))child.remove();
  document.querySelector('#version').textContent='运行版本：'+data.release.candidate+' · 自动刷新并发：'+(data.refresh_workers??'未知');
  currentProjects=data.projects;
  document.querySelector('#count-all').textContent=data.projects.length;
@@ -140,7 +156,7 @@ async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].include
  if(a.response)text(block,'p','回复摘要：'+a.response.slice(0,16)+'…');});
  if(group.truncated)text(block,'p','记录超过页面上限，需查询完整本地记录。');}
  status.className='';status.textContent='更新于 '+new Date().toLocaleTimeString();
- }catch(e){renderLogging(null);status.textContent=e.message;status.className='error';for(const id of ['count-all','count-ready','count-pending'])document.querySelector('#'+id).textContent='—';accounts.querySelectorAll('.account-card').forEach(cardMotion.remove);accounts.replaceChildren();const failure=text(accounts,'div','','empty');text(failure,'h3','暂时无法读取账号状态');text(failure,'p','请检查管理服务连接后重试。当前页面不显示过期的接单状态。');const retry=text(failure,'button','重新读取');retry.onclick=()=>refresh(true);document.querySelector('#requests').replaceChildren();}finally{busy=false;if(focusKey){[...accounts.querySelectorAll('[data-focus-id]')].find(el=>el.dataset.focusId===focusKey)?.focus({preventScroll:true});}}}
+ }catch(e){renderLogging(null);status.textContent=e.message;status.className='error';for(const id of ['count-all','count-ready','count-pending'])document.querySelector('#'+id).textContent='—';document.querySelectorAll('.account-card').forEach(cardMotion.remove);accounts.replaceChildren();const failure=text(accounts,'div','','empty');text(failure,'h3','暂时无法读取账号状态');text(failure,'p','请检查管理服务连接后重试。当前页面不显示过期的接单状态。');const retry=text(failure,'button','重新读取');retry.onclick=()=>refresh(true);document.querySelector('#requests').replaceChildren();}finally{busy=false;if(focusKey){[...document.querySelectorAll('[data-focus-id]')].find(el=>el.dataset.focusId===focusKey)?.focus({preventScroll:true});}}}
 document.querySelector('#refresh').addEventListener('click',()=>refresh(true));refresh();setInterval(()=>{if(!document.hidden)refresh();},5000);
 
 async function operate(slug,action){
