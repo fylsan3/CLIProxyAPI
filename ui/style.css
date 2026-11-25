@@ -47,7 +47,7 @@ dialog{color:var(--text-primary,#2d2a26);background:var(--bg-primary,#fff);borde
 @media(max-width:520px){.card-heading-actions{flex-direction:column;align-items:flex-end;gap:8px}.card-heading-actions .badge{max-width:none}.detail-portal{width:calc(100vw - 24px)}.detail-portal .account-card{max-height:calc(100dvh - 32px)}.detail-portal .card-main{padding:18px}}
 
 /* Compact list cards: actions must not set the grid's minimum width. */
-#accounts{grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))}
+#accounts{grid-template-columns:repeat(auto-fill,minmax(0,min(100%,440px)));justify-content:start}
 .account-card,.account-slot{min-width:0}.card-heading{gap:12px}.account-title{flex:1;min-width:0}
 .card-heading-actions{gap:6px}.card-heading-actions .detail-toggle{min-width:60px;padding:6px 10px;gap:5px}
 .card-heading-actions .badge{padding:4px 7px}.detail-portal{width:min(920px,calc(100vw - 48px))}
