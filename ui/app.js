@@ -67,7 +67,8 @@ function renderCard(p,data){
  const beam=card.querySelector('.border-beam')||text(card,'span','','border-beam');beam.setAttribute('aria-hidden','true');
  card.dataset.search=((p.label||'')+' '+p.slug).toLocaleLowerCase();
  const main=text(card,'div','','card-main'),heading=text(main,'div','','card-heading'),title=text(heading,'div','','account-title');
- text(title,'h2',p.identity?.email||p.label||'待授权账号');text(title,'span',subscriptionLabel(p.state),'subscription-badge');text(title,'p',data.providers?.[p.provider]?.label||p.provider,'muted');
+ const subscriptionHeading=text(title,'h2','Claude 订阅号','subscription-heading');text(subscriptionHeading,'span',subscriptionLabel(p.state),'subscription-badge');
+ text(title,'p',p.identity?.email||p.label||'待授权账号','muted account-email');
  const needsAuth=['authorization_required','authorization_pending'].includes(p.reason);
  const headingActions=text(heading,'div','','card-heading-actions');
  text(headingActions,'span',p.overall_ready?'可接单':p.protection?.phase==='creating'?'创建中':p.protection?.phase==='creation_failed'?'创建失败':p.reason==='missing'?'待创建环境':p.reason==='authorization_pending'?'等待授权':p.reason==='authorization_required'?'需要授权':'暂停接单','badge '+accountTone(p));

@@ -17,3 +17,12 @@ assert.equal(context.resetGrantSummary({}).reported,false);
 grantState.account_observation.usage.values.cedar_ember.grants[0].resets_left=undefined;
 assert.equal(context.resetGrantSummary(grantState,Date.parse('2026-11-25')).left,undefined);
 console.log('reset grant count, expiry and unknown data passed');
+
+for(const [values,label] of [
+ [{rate_limit_tier:'default_claude_max_20x'},'Ultra'],
+ [{subscription_type:'ultra'},'Ultra'],
+ [{rate_limit_tier:'default_claude_max_5x'},'Max'],
+ [{organization_type:'claude_max'},'Max'],
+ [{subscription_type:'pro'},'Pro'],[{},'档位未报告']
+])assert.equal(context.subscriptionLabel({account_observation:{profile:{values}}}),label);
+console.log('current official and legacy subscription names passed');

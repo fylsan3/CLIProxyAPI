@@ -25,9 +25,12 @@ if(typeof module!=='undefined')module.exports={quotaLines};
 // Explicit reported subscription fields only; no inference from usage or token lifetime.
 function subscriptionLabel(state){
  const p=state?.account_observation?.profile?.values||{},v={...(state?.subscription||{}),...p};
- const raw=[v.subscription_type,v.plan_type,v.rate_limit_tier].filter(Boolean).join(' · ');
- if(/max_20x|20x/i.test(raw))return 'Max 20×';if(/max_5x|5x/i.test(raw))return 'Max 5×';
- if(/\bpro\b|claude_pro/i.test(raw))return 'Pro';if(/max/i.test(raw))return 'Max';return raw||'档位未报告';
+ const raw=[v.subscription_type,v.plan_type,v.rate_limit_tier,v.organization_type].filter(Boolean).join(' · ');
+ // Official naming checked 2026-11-25: Max 20x migrated to Ultra; Max 5x is Max.
+ // Legacy upstream tier identifiers remain valid evidence; do not alter stored data or quota windows.
+ if(/\bultra\b|claude_ultra|max[_ -]?20x/i.test(raw))return 'Ultra';
+ if(/\bpro\b|claude_pro/i.test(raw))return 'Pro';if(/max/i.test(raw))return 'Max';
+ if(/\bfree\b|claude_free/i.test(raw))return 'Free';return raw||'档位未报告';
 }
 function accountQuotaWindows(state){
  const active=state?.account_observation?.usage,passive=state?.quota_observation;
