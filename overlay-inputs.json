@@ -24,5 +24,6 @@
   "internal/runtime/executor/helps/container_sse.go": "src/internal/runtime/executor/helps/container_sse.go",
   "internal/runtime/executor/claude_executor_container.go": "src/internal/runtime/executor/claude_executor_container.go",
   "internal/runtime/executor/helps/utls_client.go": "src/internal/runtime/executor/helps/utls_client.go",
-  "internal/api/handlers/management/container_socket.go": "src/internal/api/handlers/management/container_socket.go"
+  "internal/api/handlers/management/container_socket.go": "src/internal/api/handlers/management/container_socket.go",
+  "internal/api/container_control_key.go": "src/internal/api/container_control_key.go"
 }

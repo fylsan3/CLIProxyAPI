@@ -1,11 +1,11 @@
-# portable-capture1 测试候选版
+# mac-production1
 
-基于已冻结的 claude-delivery1；本轮只增加 Linux 双服务部署适配、可配置的本机 Docker/内部派单通道，以及单次原始请求采集重放工具。保留 Go 执行器、原生账号调度和既有手动请求头。本目录不是生产部署，也没有上传 GitHub。
+基于 portable-capture1 增加 Mac 空账号生产启动、配置保留、整体切换与回滚。保留 Go 执行器、原生账号调度及已有手动请求头。
 
-- Mac：继续由 launch.py 启动独立测试状态。普通启动保留账号状态；只有明确的一次性虚构账号测试使用 --ephemeral。
-- Linux：见 linux/README_CN.md；当前只构建 ARM64。中央程序禁止主动网络连接，账号控制器通过 Docker 管理账号容器。
-- 单次采样：见 采样与重放说明.md；不自动连接生产或修改 NewAPI。
-- 统一构建：build.py。请勿分别使用历史 build_*.py 来混装组件。
-- 验收证据：evidence/本轮验收说明.md。
+- Mac 生产安装与回滚：见 MAC_RELEASE_CN.md。
+- 独立测试：launch.py 默认仍按隔离测试规则启动；--production 才允许经过检查的生产配置。--ephemeral 只供一次性虚构账号测试，生产模式禁止使用。
+- Linux：见 linux/README_CN.md；当前仅 ARM64，目标机器 systemd 启动另行验收。
+- 单次采样：见 采样与重放说明.md，不会自动开启生产正文日志。
+- 统一构建：build.py，避免分别构建组件造成混装。
 
-Linux 容器内运行验证与目标服务器 systemd 验收分开记录；没有真实订阅号的测试，不能宣称官方授权及模型端点已经验证。旧历史请求缺少原始正文，无法进行那条历史请求的字节重放。本轮重放来自新生成并实际采集的虚构请求。
+源码在 fylsan3/CLIProxyAPI 的独立分支维护，不覆盖 main。源码、已安装版本、真实订阅验收分别记录；没有真实账号验证时不能宣称官方服务已接通。

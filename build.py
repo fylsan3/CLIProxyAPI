@@ -55,10 +55,10 @@ def build(images=True):
  (ROOT/'image.json').write_text(json.dumps(base,indent=2)+'\n')
  files={}
  for p in ROOT.rglob('*'):
-  if not p.is_file() or any(x in p.relative_to(ROOT).parts for x in ['evidence','tests','__pycache__']):continue
+  if not p.is_file() or any(x in p.relative_to(ROOT).parts for x in ['evidence','tests','__pycache__','.git','.build-tools']):continue
   if p.name=='release-manifest.json':continue
   files[str(p.relative_to(ROOT))]=digest(p)
- (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'portable-capture1','published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
+ (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'mac-production1','published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
  parser=argparse.ArgumentParser();parser.add_argument('--compile-only',action='store_true');args=parser.parse_args();build(not args.compile_only)

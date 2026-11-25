@@ -1,6 +1,6 @@
 # CPA container runtime — source snapshot
 
-Source release of the `portable-capture1` test candidate based on CPA v8.1.1. This branch is a source snapshot, not a production deployment or upstream merge. The source and overlays reproduce the separately tested local candidate. Production migration is not yet validated.
+Source release of the `mac-production1` container runtime based on CPA v8.1.1. This branch is a source snapshot, not a production deployment or upstream merge. The source and overlays reproduce the separately tested local candidate. The installer supports an empty-account Mac cutover only; see `MAC_RELEASE_CN.md`.
 
 - `source/`: frozen CPA source, verified by `source-inputs.json`.
 - `src/`: reviewed local overlays, applied using `overlay-inputs.json`.

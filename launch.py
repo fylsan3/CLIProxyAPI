@@ -1,4 +1,4 @@
-"""Start the Mac offline candidate as one managed process tree, without production access."""
+"""Start the Mac central/controller process tree with separate test and production modes."""
 import argparse,contextlib,hashlib,json,os,secrets,signal,socket,sqlite3,subprocess,sys,time,urllib.request
 from pathlib import Path
 from lab_support import ROOT,docker,wait,stop,mac_profile
@@ -10,7 +10,8 @@ from version import release_info
 def run():
     parser=argparse.ArgumentParser();parser.add_argument('--state',type=Path,default=ROOT/'run')
     parser.add_argument('--max-request-body-bytes',type=int);parser.add_argument('--port',type=int,default=0);parser.add_argument('--dashboard-port',type=int,default=0)
-    parser.add_argument('--backup-directory',type=Path);network_args=parser.add_mutually_exclusive_group(required=True);network_args.add_argument('--network-fixture',type=Path);network_args.add_argument('--network-config',type=Path);parser.add_argument('--refresh-workers',type=int);parser.add_argument('--ephemeral',action='store_true');parser.add_argument('--check',action='store_true');args=parser.parse_args()
+    parser.add_argument('--production',action='store_true');parser.add_argument('--backup-directory',type=Path);network_args=parser.add_mutually_exclusive_group(required=True);network_args.add_argument('--network-fixture',type=Path);network_args.add_argument('--network-config',type=Path);parser.add_argument('--refresh-workers',type=int);parser.add_argument('--ephemeral',action='store_true');parser.add_argument('--check',action='store_true');args=parser.parse_args()
+    if args.production and (args.ephemeral or args.network_fixture):raise ValueError('production_requires_persistent_managed_network')
     info=release_info()
     if args.check:
         print(json.dumps(dict(info,host_start_supported=sys.platform in ('darwin','linux'),launch_method='systemd split services' if sys.platform=='linux' else 'supervised process tree',linux_target_verified=False),indent=2));return
@@ -32,7 +33,7 @@ def run():
         docker('image','inspect',info['image'])
         private_directory(state/'auth-empty')
         from saved_config import prepare
-        cfgpath,keypath,key,port=prepare(ROOT,state,args.port,args.refresh_workers,args.max_request_body_bytes)
+        cfgpath,keypath,key,port=prepare(ROOT,state,args.port,args.refresh_workers,args.max_request_body_bytes,production=args.production)
         private_directory(private)
         if args.backup_directory:
             from portable_backup import configure_destination
@@ -44,7 +45,7 @@ def run():
         if args.network_fixture and selected.get('mode','closed_test') not in ('closed_test','closed_tls_test'):raise ValueError('test_network_required')
         if fixture_path.exists() and json.loads(fixture_path.read_text())!=json.loads(fixture_raw):raise ValueError('saved_network_fixture_changed_no_overwrite')
         if not fixture_path.exists():fixture_path.write_text(fixture_raw)
-        view=private/'central-view.json';private_file(view);view.write_text(json.dumps({'port':port,'key':key}))
+        view=private/'central-view.json';private_file(view);view.write_text(json.dumps({'port':port,'key':key,'mode':'production' if args.production else 'test'}))
         with contextlib.ExitStack() as files:
             log=files.enter_context((state/'broker.log').open('ab'))
             broker=subprocess.Popen([sys.executable,'-B',str(ROOT/'broker.py'),str(private),str(sock)],stdout=log,stderr=log)
@@ -52,7 +53,7 @@ def run():
             wait(lambda:sock.is_socket())
             with sqlite3.connect(private/'control.sqlite') as db:scope=db.execute('SELECT scope FROM meta').fetchone()[0]
             central_log=files.enter_context((state/'central.log').open('ab'))
-            central=subprocess.Popen(['/usr/bin/sandbox-exec','-p',mac_profile([sock],[private,Path.home()/'cliproxyapi'],__import__('host_runtime').docker_socket()),str(ROOT/'central/cli-proxy-api'),'-config',str(cfgpath),'-local-model'],cwd=state,env={'HOME':str(state),'TMPDIR':str(state),'PATH':'/usr/bin:/bin','CPA_CONTAINER_ROUTING':'1','MANAGEMENT_STATIC_PATH':str(ROOT/'static')},stdout=central_log,stderr=central_log)
+            central=subprocess.Popen(['/usr/bin/sandbox-exec','-p',mac_profile([sock],[private,Path.home()/'cliproxyapi'],__import__('host_runtime').docker_socket(),inbound_port=port if args.production else None),str(ROOT/'central/cli-proxy-api'),'-config',str(cfgpath),'-local-model'],cwd=state,env={'HOME':str(state),'TMPDIR':str(state),'PATH':'/usr/bin:/bin','CPA_CONTAINER_ROUTING':'1','MANAGEMENT_STATIC_PATH':str(ROOT/'static'),**({'CPA_LOCAL_CONTROL_KEY_FILE':str(keypath)} if args.production else {})},stdout=central_log,stderr=central_log)
             children.append(central)
             opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
             def healthy():
@@ -63,7 +64,7 @@ def run():
             from central_view import central_request
             wait(lambda:central_request(view,'pool',{})[0]==200)
             panel={'url':'http://127.0.0.1:'+str(port)+'/accounts.html'}
-            (state/'launch.json').write_text(json.dumps({'release':info,'api_base':'http://127.0.0.1:'+str(port)+'/v1','api_key_file':str(keypath),'model':'test-project-shared' if selected.get('mode','closed_test')=='closed_test' else 'claude-sonnet-4-5','management_url':panel['url'],'ephemeral':args.ephemeral},indent=2))
+            (state/'launch.json').write_text(json.dumps({'release':info,'api_base':'http://127.0.0.1:'+str(port)+'/v1','api_key_file':None if args.production else str(keypath),'control_key_file':str(keypath) if args.production else None,'production':args.production,'model':'test-project-shared' if selected.get('mode','closed_test')=='closed_test' else 'claude-sonnet-4-5','management_url':panel['url'],'ephemeral':args.ephemeral},indent=2))
             print('candidate_ready; connection details: '+str(state/'launch.json'),flush=True)
             while not stopping:
                 if any(p.poll() is not None for p in children):raise RuntimeError('candidate_child_exited')
