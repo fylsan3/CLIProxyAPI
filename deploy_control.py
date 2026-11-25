@@ -22,7 +22,7 @@ def deploy():
  if before.get('scheduler_in_flight')!=0 or any(p.get('state',{}).get('active_calls') or p.get('state',{}).get('refreshing') or p.get('state',{}).get('authorization_pending') for p in before['projects']):raise ValueError('account_not_idle')
  cfg_hash=hashlib.sha256((state/'config.yaml').read_bytes()).hexdigest()
  release=home/'releases'/(new_manifest['candidate']+'-control-'+str(int(time.time())));copy_release(ROOT,release)
- network=Path(args[args.index('--network-config')+1]);backup=Path(args[args.index('--backup-directory')+1]);tx=home/'transactions'/('control-'+str(int(time.time())));switch=Switch(plist,tx,port);switch.backup()
+ network=Path(args[args.index('--network-config')+1]);backup=Path(args[args.index('--backup-directory')+1]);tx=home/'transactions'/('control-'+str(int(time.time())));switch=Switch(plist,tx,port)
  def ready():
   after=snapshot()
   old={p['slug']:p for p in before['projects']}
