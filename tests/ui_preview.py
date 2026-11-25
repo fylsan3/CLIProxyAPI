@@ -1,5 +1,5 @@
 """Local-only visual acceptance fixture; never forwards write requests."""
-import copy,http.client,http.server,json,sys
+import copy,http.client,http.server,json,sys,datetime
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 MODE=Path(sys.argv[2]) if len(sys.argv)>2 else ROOT/'evidence/ui-preview-mode'
@@ -33,7 +33,7 @@ def snapshot():
     sample['projects']+=registered
     for p in sample['projects']:
         if 'state' not in p:continue
-        p['identity']={'email':p['slug']+'@example.invalid'};p['label']=p['identity']['email'];p['state']['subscription']={'subscription_type':'pro'};p['state']['account_observation']={'usage':{'values':{'five_hour':{'utilization':17},'seven_day':{'utilization':42}},'observed_at':'2026-11-25T10:00:00Z'}}
+        p['identity']={'email':p['slug']+'@example.invalid'};p['label']=p['identity']['email'];p['state']['subscription']={'subscription_type':'pro'};p['state']['account_observation']={'usage':{'values':{'five_hour':{'utilization':17,'resets_at':(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=2,minutes=14)).isoformat()},'seven_day':{'utilization':42,'resets_at':(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=3,hours=4)).isoformat()}},'observed_at':'2026-11-25T10:00:00Z'}}
     return sample
 
 class Handler(http.server.BaseHTTPRequestHandler):

@@ -40,15 +40,29 @@ function accountQuotaWindows(state){
   return {label,percent:valid?n*100:undefined,reset:/^[0-9]+$/.test(headers[prefix+'reset']||'')&&Number.isFinite(new Date(Number(headers[prefix+'reset'])*1000).getTime())?new Date(Number(headers[prefix+'reset'])*1000).toISOString():undefined,stamp:passive?.observed_at,source:'模型回复'};
  });
 }
+function quotaCountdown(reset,now=Date.now()){
+ const end=Date.parse(reset||'');if(!Number.isFinite(end))return '重置时间未报告';
+ const minutes=Math.ceil((end-now)/60000);if(minutes<=0)return '已到重置时间，待更新';
+ const days=Math.floor(minutes/1440),hours=Math.floor(minutes%1440/60),mins=minutes%60;
+ return days?'距重置 '+days+'天 '+hours+'小时':hours?'距重置 '+hours+'小时 '+mins+'分钟':'距重置 '+mins+'分钟';
+}
 function renderAccountQuota(parent,p){
  const wrap=text(parent,'section','','account-quota');wrap.setAttribute('aria-label','订阅额度');
+ const sources=new Map();
  for(const item of accountQuotaWindows(p.state)){
-  const row=text(wrap,'div','','quota-window'),heading=text(row,'div','','quota-heading');text(heading,'span',item.label);const valid=Number.isFinite(item.percent);text(heading,'strong',valid?Number(item.percent.toFixed(2))+'% 已用':'未报告');
-  const meter=text(row,'div','','quota-meter');if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+'已用额度');meter.setAttribute('aria-valuenow',String(item.percent));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=item.percent+'%';}
-  if(item.reset&&Number.isFinite(Date.parse(item.reset))){text(row,'p','重置 '+new Date(item.reset).toLocaleString(),'help');if(Date.parse(item.reset)<=Date.now())text(row,'p','已过所报重置时间，请更新资料。','help');}
-  if(item.stamp)text(row,'p',item.source+' · '+new Date(item.stamp).toLocaleString(),'help');
+  const stale=Number.isFinite(Date.parse(item.reset||''))&&Date.parse(item.reset)<=Date.now();
+  const valid=Number.isFinite(item.percent)&&item.percent>=0&&item.percent<=100,remaining=valid?100-item.percent:undefined;
+  const tone=stale?'quota-stale':valid&&remaining<30?'quota-danger':valid&&remaining<70?'quota-warning':'';
+  const row=text(wrap,'div','','quota-window '+tone),heading=text(row,'div','','quota-heading'),label=text(heading,'span',item.label);
+  text(label,'span',' · '+quotaCountdown(item.reset),'quota-countdown');
+  text(heading,'strong',valid?(stale?'上次剩余 ':'剩余 ')+Number(remaining.toFixed(2))+'%':'未报告');
+  if(item.reset&&Number.isFinite(Date.parse(item.reset)))row.title='上游所报重置时间：'+new Date(item.reset).toLocaleString();
+  const meter=text(row,'div','','quota-meter');
+  if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}
+  if(item.stamp){const key=item.source+' · '+new Date(item.stamp).toLocaleString();sources.set(key,[...(sources.get(key)||[]),item.label]);}
  }
+ for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
  const observation=p.state?.account_observation;
  for(const [key,label] of [['profile','档位'],['usage','额度']])if(observation?.[key]?.error)text(wrap,'p',label+'查询失败；'+(observation[key].observed_at?'显示上次成功结果。':'尚无结果。'),'status-bad');
- text(wrap,'p','历史观测，不代表实时余额。','help');
+ text(wrap,'p','上次观测结果；到重置时间后需更新确认。','help');
 }

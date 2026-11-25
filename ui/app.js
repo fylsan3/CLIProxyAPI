@@ -87,7 +87,6 @@ function renderCard(p,data){
  }
  function action(parent,operation,label,secondary=false){const b=text(parent,'button',label,secondary?'secondary':'');b.dataset.focusId=p.slug+':'+operation;b.disabled=working;b.addEventListener('click',()=>operate(p.slug,operation));return b;}
  if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase))action(actions,'create','校验代理并创建容器');
- if(p.state?.authorized){const b=action(actions,'account-update',p.state.account_updating?'正在更新…':'更新账号资料',true);b.disabled=working||p.state.account_updating;}
  if(p.reason==='authorization_required')action(actions,'auth-begin','打开浏览器授权');
  if(p.container){
   if(viewers[p.slug]){const link=text(actions,'a','进入容器浏览器','button-link');link.href=viewers[p.slug];link.target='_blank';link.rel='noreferrer noopener';}
@@ -96,6 +95,7 @@ function renderCard(p,data){
   if(p.reason==='authorization_pending')action(actions,'auth-cancel','取消本次授权',true);
   const restart=action(actions,'restart',stopped?'启动容器':'重启容器',true);
   if((p.state?.active_calls||0)>0||p.state?.refreshing||p.reason==='authorization_pending'||p.reason==='account_maintenance'){restart.disabled=true;restart.title='请等待正在执行的任务、刷新或授权完成后再重启';}
+  if(p.state?.authorized){const b=action(actions,'account-update',p.state.account_updating?'正在刷新…':'刷新用量',true);b.disabled=working||p.state.account_updating||stopped;}
  }
  if(['backup_failed','recovery_check_failed'].includes(protection.phase)||(p.state?.authorized&&!protection.backup_verified))action(actions,'retry-backup','重试环境备份');
  if(!actions.children.length)actions.hidden=true;
@@ -173,6 +173,11 @@ document.querySelector('#refresh').addEventListener('click',()=>refresh(true));r
 
 async function operate(slug,action){
  if(working||confirming)return;
+ if(action==='account-update'){
+  confirming=true;const dialog=document.querySelector('#usage-refresh-dialog');document.querySelector('#usage-refresh-account').textContent=currentProjects.find(p=>p.slug===slug)?.label||slug;dialog.returnValue='';
+  let accepted=false;try{accepted=await new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.showModal();});}finally{confirming=false;}
+  if(!accepted)return;
+ }
  if(action==='restart'){
   confirming=true;const dialog=document.querySelector('#restart-dialog');document.querySelector('#restart-account').textContent=currentProjects.find(p=>p.slug===slug)?.label||slug;dialog.returnValue='';
   const accepted=await new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.showModal();});confirming=false;if(!accepted)return;
