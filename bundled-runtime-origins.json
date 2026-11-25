@@ -1,0 +1,22 @@
+{
+  "central_policy.py": {
+    "source": "WORKSPACE/work/runtime-persistence/central_policy.py",
+    "sha256": "e37337c4a4e60890b69d1c89827b212153a730c4280d332024c042d0de04a66e"
+  },
+  "runtime_guard.py": {
+    "source": "WORKSPACE/work/runtime-persistence/project/runtime_guard.py",
+    "sha256": "9fb36250047638c6fcdf4f8df23ebe3329823940bdb6b05c1fe33cef48b8b163"
+  },
+  "storage_guard.py": {
+    "source": "WORKSPACE/work/runtime-persistence/project/storage_guard.py",
+    "sha256": "f7fe5c2f37d454dbc683f57b58fa2f47a458b3f03cc21f71741ebcf35d0252b0"
+  },
+  "retention.py": {
+    "source": "WORKSPACE/work/environment-retention/image/retention.py",
+    "sha256": "aed345aad4b67b2a6e8ec41aecbf26056d6d5f866cd8bb6bfeeb9af31568c625"
+  },
+  "retention_base.py": {
+    "source": "WORKSPACE/work/environment-retention/control.py",
+    "sha256": "048811bb7bf19d31520c1ed0e1bdc1add60b3cf32830217a24598d9d2475840f"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "cmd/server/offline_worker_entry.go": {
+    "from": "WORKSPACE/work/protocol-parameters/worker.go",
+    "initial_sha256": "c1642b84bd2d1b4b0fcc5f02f008a36a2c10d2d8c9c2612220dcc448d9d7875a"
+  },
+  "internal/auth/claude/offline_auth.go": {
+    "from": "WORKSPACE/work/native-scheduling/patch/offline_auth.go",
+    "initial_sha256": "d579f40c7268d128509135b7ac425f66e6c8de0b4eda978fb0954f95ddd199f1"
+  },
+  "cmd/server/offline_refresh_controller.go": {
+    "from": "WORKSPACE/work/control-recovery/refresh_controller.go",
+    "initial_sha256": "d9bab43e846104955e1985d3b6c19abebf458a6d21c375bcacae950327198716"
+  },
+  "sdk/cliproxy/auth/offline_refresh.go": {
+    "from": "WORKSPACE/work/native-scheduling/patch/offline_refresh.go",
+    "initial_sha256": "5f301f0e4fa58ae0a5d39507de6d176f211200cd199aa09ef1757cac87b682d9"
+  },
+  "sdk/api/handlers/claude/code_handlers.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/code_handlers.go",
+    "initial_sha256": "22a84b3ddcaa79c0c92f3debea29e705551603bba6520b6cdef54651a245245e"
+  },
+  "internal/api/server_routes.go": {
+    "from": "WORKSPACE/work/native-scheduling/central/server_routes.go",
+    "initial_sha256": "9650c79b28c40afd2cbde45d53e0f5b609823ecbbff8f5888e4191a1925d0d62"
+  },
+  "internal/api/server_management_v8.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/server_management_v8.go",
+    "initial_sha256": "423dc17af15c5f3c811dc8aa1ec397191c42fff47ec6f4fb4c7a47ec55f72798"
+  },
+  "internal/api/handlers/management/project_routes.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/project_routes.go",
+    "initial_sha256": "5e8d5746c97e8704a0a6fbbf582ba4f0386650548f48076fd144e98652e20c69"
+  },
+  "internal/api/server.go": {
+    "from": "WORKSPACE/work/native-scheduling/central/server.go",
+    "initial_sha256": "7773c9f7ae4f97633b93859192bf41a8fd1128ceceb9884c862a9cdaafb63330"
+  },
+  "internal/api/handlers/management/console_channel.go": {
+    "from": "WORKSPACE/work/native-scheduling/central/console_channel.go",
+    "initial_sha256": "8085790a061706224a1536b616ce8c5ef3c124e1718e9fc6943603bc4e97d109"
+  },
+  "internal/api/handlers/management/project_pool.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/project_pool.go",
+    "initial_sha256": "0a50fd73a988304b1f712025c44ed3d0f0950cac938c64a0cb653ea943035f57"
+  },
+  "internal/api/handlers/management/project_refresh.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/project_refresh.go",
+    "initial_sha256": "697a884ab73cbb902c2b3c4d57d980243d44c1ad9f5ec811a54b02132432c03c"
+  },
+  "sdk/cliproxy/auth/local_project_state.go": {
+    "from": "WORKSPACE/work/native-scheduling/central/project_state.go",
+    "initial_sha256": "8ef10d471041276f689a7c298cf2328bfaf77c3bdf94b9d428144d3cbfaf6850"
+  },
+  "internal/auth/claude/oauth_server.go": {
+    "from": "WORKSPACE/work/network-callback/patch/oauth_server.go",
+    "initial_sha256": "ef499c3e86ccd60b00a18fa5f1a458b137c769f9c32fbb6137ee30fc5edeaa2a"
+  },
+  "internal/auth/claude/utls_transport.go": {
+    "from": "WORKSPACE/work/network-callback/patch/utls_transport.go",
+    "initial_sha256": "f1e83536916fb15b415ae704848d34d53fc109c1d2f52a89ec5a400097611697"
+  },
+  "sdk/auth/claude.go": {
+    "from": "WORKSPACE/work/network-callback/patch/claude.go",
+    "initial_sha256": "aa0c728b6feb83f53d1da6531da42b395a4bb07b54316dbc4fd283e2303589d1"
+  },
+  "internal/auth/claude/container_auth.go": {
+    "from": "WORKSPACE/work/control-recovery/patch/container_auth.go",
+    "initial_sha256": "43200636111b32160142b70903a5f951c0f351822792c85a0a390f0ce8072e63"
+  },
+  "internal/runtime/executor/claude_executor_tokens.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/claude_executor_tokens.go",
+    "initial_sha256": "5c8e586704284430d923d0b9a1e228dc3e9eb6072722166e094d43582f755f09"
+  },
+  "internal/util/container_http_headers.go": {
+    "from": "WORKSPACE/work/protocol-parameters/patch/container_http_headers.go",
+    "initial_sha256": "4ccfc7145cf656e0132044bdd3f4037a1266d29e5428397ada0b676bc12321ed"
+  },
+  "internal/api/handlers/management/account_console.go": {
+    "from": "WORKSPACE/work/header-compatibility/patch/account_console.go",
+    "initial_sha256": "9f2a3eb09623d26d2363cad4b863f081c6416b80ef62274a3615bd15416907db"
+  }
+}

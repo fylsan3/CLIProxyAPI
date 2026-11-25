@@ -1,0 +1,272 @@
+diff --git a/internal/api/handlers/management/auth_files_provider_oauth.go b/internal/api/handlers/management/auth_files_provider_oauth.go
+index 1752d5e..985d3a6 100644
+--- a/internal/api/handlers/management/auth_files_provider_oauth.go
++++ b/internal/api/handlers/management/auth_files_provider_oauth.go
+@@ -577,6 +577,7 @@ func (h *Handler) commitAndCompleteBuiltinOAuthSession(ctx context.Context, stat
+ 			FailOAuthSessionCommit(state, failSaveMessage)
+ 			return "", false
+ 		}
++		oauthSessions.noteSavedForOverview(state, record.FileName)
+ 		CompleteOAuthSession(state)
+ 		return savedPath, true
+ 	}
+diff --git a/internal/api/handlers/management/oauth_sessions.go b/internal/api/handlers/management/oauth_sessions.go
+index 3fc18bc..85b4eed 100644
+--- a/internal/api/handlers/management/oauth_sessions.go
++++ b/internal/api/handlers/management/oauth_sessions.go
+@@ -50,29 +50,30 @@ type oauthRecoveryTarget struct {
+ }
+ 
+ type oauthSession struct {
+-	Provider        string
+-	Status          string
+-	Source          string
+-	ProxyURL        string
+-	Metadata        map[string]any
+-	SIWC            *siwcBindSession
+-	Target          *oauthRecoveryTarget
+-	AuthID          string
+-	SavedGrantHash  string
+-	Saved           bool
+-	Adopted         bool
+-	BaselineExisted bool
+-	BaselineVersion uint64
+-	BaselineEpoch   uint64
+-	AdoptedVersion  uint64
+-	AdoptedEpoch    uint64
+-	AdoptError      string
+-	VerifyError     string
+-	Committing      bool
+-	SIWCCommitting  bool
+-	Completed       bool
+-	CreatedAt       time.Time
+-	ExpiresAt       time.Time
++	overviewSavedName string // Display-only receipt for successful non-targeted saves.
++	Provider          string
++	Status            string
++	Source            string
++	ProxyURL          string
++	Metadata          map[string]any
++	SIWC              *siwcBindSession
++	Target            *oauthRecoveryTarget
++	AuthID            string
++	SavedGrantHash    string
++	Saved             bool
++	Adopted           bool
++	BaselineExisted   bool
++	BaselineVersion   uint64
++	BaselineEpoch     uint64
++	AdoptedVersion    uint64
++	AdoptedEpoch      uint64
++	AdoptError        string
++	VerifyError       string
++	Committing        bool
++	SIWCCommitting    bool
++	Completed         bool
++	CreatedAt         time.Time
++	ExpiresAt         time.Time
+ }
+ 
+ type oauthSessionStore struct {
+diff --git a/internal/api/server_management.go b/internal/api/server_management.go
+index 1eabc9c..544a8c8 100644
+--- a/internal/api/server_management.go
++++ b/internal/api/server_management.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 	"net/http"
+ 	"os"
++	"path/filepath"
+ 	"strings"
+ 
+ 	"github.com/gin-gonic/gin"
+@@ -321,6 +322,13 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
+ 		return
+ 	}
+ 
++	localPanel := filepath.Join(filepath.Dir(filePath), "management.local.html")
++	if info, err := os.Stat(localPanel); err == nil && info.Mode().IsRegular() {
++		c.Header("Cache-Control", "no-cache")
++		c.File(localPanel)
++		return
++	}
++
+ 	if _, err := os.Stat(filePath); err != nil {
+ 		if os.IsNotExist(err) {
+ 			// Synchronously ensure management.html is available with a detached context.
+diff --git a/internal/api/server_management_v8.go b/internal/api/server_management_v8.go
+index 47816c9..89f4d47 100644
+--- a/internal/api/server_management_v8.go
++++ b/internal/api/server_management_v8.go
+@@ -18,6 +18,8 @@ func (s *Server) registerManagementV8Routes() {
+ 	v8.Use(s.managementAvailabilityMiddleware(), s.mgmt.Middleware(), func(c *gin.Context) {
+ 		c.Set(management.ConfigV8ContextKey, true)
+ 	})
++	v8.GET("/local-overview", s.mgmt.LocalOverview)
++	v8.POST("/local-fixtures/:owner/:action", s.mgmt.LocalFixtureJob)
+ 	v8.GET("/config", s.mgmt.ConfigV8)
+ 	v8.PUT("/config", s.mgmt.ConfigV8)
+ 	v8.PATCH("/config", s.mgmt.ConfigV8)
+diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
+index 57a8fd8..4b9810a 100644
+--- a/internal/api/server_routes.go
++++ b/internal/api/server_routes.go
+@@ -56,9 +56,12 @@ func (s *Server) setupRoutes() {
+ 	s.engine.HEAD("/healthz", healthzHandler)
+ 
+ 	s.engine.GET("/management.html", s.serveManagementControlPanel)
++	s.engine.GET("/accounts.html", s.serveManagementControlPanel)
+ 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
+ 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
+ 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
++	claudeCodeHandlers.LocalFixtureMessages = s.mgmt.LocalFixtureMessages
++	claudeCodeHandlers.LocalAcceptance = s.mgmt.LocalAcceptance
+ 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
+ 	openaiResponsesHandlers.AccessManager = s.accessManager
+ 	s.codexLiveHandler = codexlive.NewHandler(s.handlers.AuthManager, s.cfg)
+diff --git a/internal/runtime/executor/claude_executor_execute.go b/internal/runtime/executor/claude_executor_execute.go
+index 9390136..4988daf 100644
+--- a/internal/runtime/executor/claude_executor_execute.go
++++ b/internal/runtime/executor/claude_executor_execute.go
+@@ -352,7 +352,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
+ 		if fastRequest {
+ 			return resp, newClaudeFastDirectResponseError(httpResp, b)
+ 		}
+-		return resp, classifyClaudeUpstreamErrorWithCooling(httpResp.StatusCode, httpResp.Header, b, e.modelLevelCooling())
++		return resp, classifyClaudeHTTPError(httpResp.StatusCode, httpResp.Header, b, e.modelLevelCooling(), readErr == nil)
+ 	}
+ 	decodedBody, err := decodeResponseBody(httpResp.Body, claudeResponseContentEncoding(httpResp.Header))
+ 	if err != nil {
+diff --git a/internal/runtime/executor/claude_executor_fast_error.go b/internal/runtime/executor/claude_executor_fast_error.go
+index a37feea..328ce7d 100644
+--- a/internal/runtime/executor/claude_executor_fast_error.go
++++ b/internal/runtime/executor/claude_executor_fast_error.go
+@@ -93,6 +93,8 @@ type claudeFastDirectResponseError struct {
+ 	credentialScoped bool
+ }
+ 
++func (e *claudeFastDirectResponseError) IsUpstreamClaudeHTTPResponse() bool { return true }
++
+ func (e *claudeFastDirectResponseError) Error() string {
+ 	if e == nil || e.response == nil {
+ 		return ""
+diff --git a/internal/runtime/executor/claude_executor_request.go b/internal/runtime/executor/claude_executor_request.go
+index 5a11869..af785f4 100644
+--- a/internal/runtime/executor/claude_executor_request.go
++++ b/internal/runtime/executor/claude_executor_request.go
+@@ -887,11 +887,15 @@ func classifyClaudeUpstreamError(statusCode int, headers http.Header, body []byt
+ }
+ 
+ func classifyClaudeUpstreamErrorWithCooling(statusCode int, headers http.Header, body []byte, modelLevelCooling bool) error {
++	return classifyClaudeHTTPError(statusCode, headers, body, modelLevelCooling, false)
++}
++
++func classifyClaudeHTTPError(statusCode int, headers http.Header, body []byte, modelLevelCooling, original bool) error {
+ 	var retryAfter *time.Duration
+ 	if statusCode == http.StatusTooManyRequests || (statusCode >= 400 && statusCode < 600) {
+ 		retryAfter = helps.ParseClaudeRateLimitResetForError(headers, body, time.Now())
+ 	}
+-	err := statusErr{code: statusCode, msg: string(body), retryAfter: retryAfter}
++	err := statusErr{code: statusCode, msg: string(body), originalClaudeBody: original, retryAfter: retryAfter}
+ 	if statusCode == http.StatusTooManyRequests {
+ 		if !modelLevelCooling && helps.ClaudeHeadersIndicateUnifiedRateLimitRejection(headers) {
+ 			return claudeRateLimitError{statusErr: err, credentialScoped: true}
+diff --git a/internal/runtime/executor/claude_executor_stream.go b/internal/runtime/executor/claude_executor_stream.go
+index cb63d6d..0eee474 100644
+--- a/internal/runtime/executor/claude_executor_stream.go
++++ b/internal/runtime/executor/claude_executor_stream.go
+@@ -346,7 +346,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
+ 		if fastRequest {
+ 			return nil, newClaudeFastDirectResponseError(httpResp, b)
+ 		}
+-		return nil, classifyClaudeUpstreamErrorWithCooling(httpResp.StatusCode, httpResp.Header, b, e.modelLevelCooling())
++		return nil, classifyClaudeHTTPError(httpResp.StatusCode, httpResp.Header, b, e.modelLevelCooling(), readErr == nil)
+ 	}
+ 	decodedBody, err := decodeResponseBody(httpResp.Body, claudeResponseContentEncoding(httpResp.Header))
+ 	if err != nil {
+diff --git a/internal/runtime/executor/openai_compat_executor.go b/internal/runtime/executor/openai_compat_executor.go
+index 512c4f1..ade8c27 100644
+--- a/internal/runtime/executor/openai_compat_executor.go
++++ b/internal/runtime/executor/openai_compat_executor.go
+@@ -1276,6 +1276,7 @@ func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, b
+ }
+ 
+ type statusErr struct {
++	originalClaudeBody bool
+ 	code               int
+ 	msg                string
+ 	cause              error
+@@ -1292,6 +1293,9 @@ type statusErr struct {
+ 	diagnostic string
+ }
+ 
++// ClaudeResponseBody reports a fully read upstream HTTP error body.
++func (e statusErr) ClaudeResponseBody() (string, bool) { return e.msg, e.originalClaudeBody }
++
+ func (e statusErr) Error() string {
+ 	if e.msg != "" {
+ 		return e.msg
+diff --git a/sdk/api/handlers/claude/code_handlers.go b/sdk/api/handlers/claude/code_handlers.go
+index e836bb7..e09930e 100644
+--- a/sdk/api/handlers/claude/code_handlers.go
++++ b/sdk/api/handlers/claude/code_handlers.go
+@@ -37,6 +37,8 @@ import (
+ // It holds a pool of clients to interact with the backend service.
+ type ClaudeCodeAPIHandler struct {
+ 	*handlers.BaseAPIHandler
++	LocalFixtureMessages func(*gin.Context, []byte)
++	LocalAcceptance      func(*gin.Context, []byte)
+ }
+ 
+ // NewClaudeCodeAPIHandler creates a new Claude API handlers instance.
+@@ -85,6 +87,23 @@ func (h *ClaudeCodeAPIHandler) ClaudeMessages(c *gin.Context) {
+ 		return
+ 	}
+ 
++	if ojson.GetBytesNoCopy(rawJSON, "model").String() == "local-single-api-check" {
++		if h.LocalAcceptance == nil {
++			c.Status(http.StatusServiceUnavailable)
++			return
++		}
++		h.LocalAcceptance(c, rawJSON)
++		return
++	}
++	// These two reserved names terminate locally, including on worker failure.
++	if h.LocalFixtureMessages != nil {
++		switch ojson.GetBytesNoCopy(rawJSON, "model").String() {
++		case "fixture-stream-a", "fixture-stream-b":
++			h.LocalFixtureMessages(c, rawJSON)
++			return
++		}
++	}
++
+ 	// Decode claude-fable-5-dd-<reversed> model IDs back to the real model name for routing.
+ 	rawJSON = rewriteClaudeDDModelInBody(rawJSON)
+ 
+@@ -631,7 +650,8 @@ func (h *ClaudeCodeAPIHandler) WriteErrorResponse(c *gin.Context, msg *interface
+ 			}
+ 		}
+ 		body := bytes.Clone(msg.Body)
+-		if clienterror.IsClaudeThreadNotFound(status, errors.New(string(body))) {
++		var upstream interface{ IsUpstreamClaudeHTTPResponse() bool }
++		if !(errors.As(msg.Error, &upstream) && upstream.IsUpstreamClaudeHTTPResponse()) && clienterror.IsClaudeThreadNotFound(status, errors.New(string(body))) {
+ 			if markedBody, errMarshal := json.Marshal(h.toClaudeError(&interfaces.ErrorMessage{
+ 				StatusCode: status,
+ 				Error:      errors.New(string(body)),
+@@ -672,6 +692,16 @@ func (h *ClaudeCodeAPIHandler) WriteErrorResponse(c *gin.Context, msg *interface
+ 		}
+ 	}
+ 
++	var upstream interface{ ClaudeResponseBody() (string, bool) }
++	if msg != nil && errors.As(msg.Error, &upstream) {
++		if original, ok := upstream.ClaudeResponseBody(); ok {
++			body := []byte(original)
++			appendClaudeAPIResponse(c, body)
++			c.Header("Content-Type", "application/json")
++			c.Data(status, "application/json", body)
++			return
++		}
++	}
+ 	body, err := json.Marshal(h.toClaudeErrorWithRetryAfter(msg, retryAfter))
+ 	if err != nil {
+ 		body = []byte(`{"type":"error","error":{"type":"api_error","message":"Internal Server Error"}}`)

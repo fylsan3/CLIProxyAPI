@@ -1,0 +1,64 @@
+"""One build entrypoint for central, worker, inspectors and closed test images."""
+import argparse,hashlib,json,os,re,shutil,subprocess,tempfile
+from pathlib import Path
+ROOT=Path(__file__).resolve().parent
+SOURCE=ROOT/'source'
+TOOL=Path(os.environ.get('CPA_BUILD_TOOLS',str(ROOT/'.build-tools'))).resolve()
+def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+def run(cmd,env=None,cwd=None):
+ p=subprocess.run(cmd,cwd=cwd,env=env,text=True,capture_output=True)
+ if p.returncode:print(p.stdout+p.stderr,flush=True);p.check_returncode()
+ return p.stdout.strip()
+def check_overrides():
+ def body(path):return path.read_text().split('func applyProviderHeaders(',1)[1].split('\ntype providerHeadersKey',1)[0]
+ assert body(ROOT/'src/cmd/server/offline_worker_entry.go')==body(ROOT/'manual-header-reference.go.txt'),'manual overrides changed'
+ policy=json.loads((ROOT/'header-policy.json').read_text())
+ code=(ROOT/'src/internal/util/container_http_headers.go').read_text().split('var containerRequestBlocked = map[string]bool{',1)[1].split('}',1)[0]
+ assert set(policy['request_blocked'])==set(re.findall(r'"([^"]+)":\s*true',code)),'header policies diverged'
+def build(images=True):
+ for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
+ from build_inputs import verify_source
+ verify_source(ROOT)
+ check_overrides()
+ mapping=json.loads((ROOT/'overlay-inputs.json').read_text())
+ (ROOT/'overlay.json').write_text(json.dumps({'Replace':{str(SOURCE/k):str(ROOT/v) for k,v in mapping.items()}},indent=2))
+ overlay=json.loads((ROOT/'overlay.json').read_text())
+ for value in overlay['Replace'].values():assert Path(value).is_relative_to(ROOT/'src'),value
+ run([str(TOOL/'go/bin/gofmt'),'-w',*[str(p) for p in (ROOT/'src').rglob('*.go')]])
+ env=dict(os.environ,GOROOT=str(TOOL/'go'),GOMODCACHE=str(TOOL/'modules'),GOCACHE=str(Path(tempfile.gettempdir())/'cpa-linux-candidate-cache'),GOARCH='arm64',CGO_ENABLED='0',GOTOOLCHAIN='local',GOENV='off',GOPROXY='off',GOSUMDB='off',GOFLAGS='',GOWORK='off')
+ def compile(system,out,args,tags=False,overlay_path=None):
+  env['GOOS']=system
+  cmd=[str(TOOL/'go/bin/go'),'build','-mod=readonly','-p','2','-overlay',str(overlay_path or ROOT/'overlay.json'),'-o',str(out)]
+  if tags:cmd+=['-tags','cpa_offline']
+  run(cmd+args,env,SOURCE);print('Built',out.relative_to(ROOT),flush=True)
+ compile('linux',ROOT/'image/worker',[str(SOURCE/'cmd/server/offline_worker_entry.go'),str(SOURCE/'cmd/server/offline_refresh_controller.go')],True)
+ compile('linux',ROOT/'central/cli-proxy-api-linux-arm64',['./cmd/server'])
+ compile('darwin',ROOT/'central/cli-proxy-api',['./cmd/server'])
+ virtual=SOURCE/'cmd/environment-config/main.go'
+ cp=ROOT/'config/overlay.json';cp.write_text(json.dumps({'Replace':{str(virtual):str(ROOT/'config/main.go')}}))
+ for system in ['darwin','linux']:compile(system,ROOT/'config'/('inspect-'+system),[str(virtual)],overlay_path=cp)
+ check_overrides()
+ if not images:return
+ from host_runtime import docker_cli
+ cli=docker_cli()
+ base=json.loads((ROOT/'base-images.json').read_text())
+ with tempfile.TemporaryDirectory(prefix='cpa-unified-image-') as folder:
+  p=Path(folder);shutil.copy2(ROOT/'image/worker',p/'worker');(p/'worker').chmod(0o755)
+  shutil.copy2(ROOT/'image/socks_adapter.py',p/'socks_adapter.py')
+  (p/'Dockerfile').write_text('FROM '+base['id']+'\nCOPY --chown=1001:1001 worker /opt/native/worker\nCOPY --chown=1001:1001 socks_adapter.py /opt/native/socks_adapter.py\n')
+  image=run(cli+['build','--network','none','-q',str(p)])
+ from prepare_test_certificates import prepare
+ prepare()
+ tls=run(cli+['build','--network','none','--build-arg','BASE='+image,'-q',str(ROOT/'tls-test')])
+ fixture=run(cli+['build','--network','none','--build-arg','BASE='+base['tls_fixture'],'-q',str(ROOT/'tls-fixture')])
+ base.update(id=image,tls_test=tls,tls_fixture=fixture,worker_sha256=digest(ROOT/'image/worker'),published=False)
+ (ROOT/'image.json').write_text(json.dumps(base,indent=2)+'\n')
+ files={}
+ for p in ROOT.rglob('*'):
+  if not p.is_file() or any(x in p.relative_to(ROOT).parts for x in ['evidence','tests','__pycache__']):continue
+  if p.name=='release-manifest.json':continue
+  files[str(p.relative_to(ROOT))]=digest(p)
+ (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'portable-capture1','published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
+ print('Unified build complete; production not modified.',flush=True)
+if __name__=='__main__':
+ parser=argparse.ArgumentParser();parser.add_argument('--compile-only',action='store_true');args=parser.parse_args();build(not args.compile_only)

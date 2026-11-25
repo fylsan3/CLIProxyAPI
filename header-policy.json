@@ -1,0 +1,52 @@
+{
+  "response_blocked": [
+    "Connection",
+    "Keep-Alive",
+    "Proxy-Authenticate",
+    "Proxy-Authorization",
+    "Te",
+    "Trailer",
+    "Transfer-Encoding",
+    "Upgrade",
+    "Set-Cookie",
+    "Cookie",
+    "Authorization",
+    "X-Api-Key",
+    "Content-Length",
+    "Content-Encoding",
+    "Access-Control-Allow-Credentials",
+    "Access-Control-Allow-Headers",
+    "Access-Control-Allow-Methods",
+    "Access-Control-Allow-Origin",
+    "Access-Control-Expose-Headers",
+    "Access-Control-Max-Age",
+    "X-Cpa-Trace-Id"
+  ],
+  "response_internal_prefixes": [
+    "x-test-",
+    "x-offline-"
+  ],
+  "request_blocked": [
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "cookie",
+    "set-cookie",
+    "host",
+    "content-length",
+    "content-encoding",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade"
+  ],
+  "request_internal_prefixes": [
+    "x-cpa-",
+    "x-offline-",
+    "x-test-"
+  ]
+}

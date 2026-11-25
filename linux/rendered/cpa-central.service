@@ -1,0 +1,38 @@
+[Unit]
+StartLimitIntervalSec=0
+Description=CPA central dispatcher
+Wants=cpa-account-broker.service
+After=cpa-account-broker.service local-fs.target
+RequiresMountsFor=/var/lib/cpa-central
+[Service]
+Type=simple
+User=cpa-central
+Group=cpa-central
+SupplementaryGroups=cpa-control
+Environment=HOME=/var/lib/cpa-central
+Environment=CPA_CONTAINER_ROUTING=1
+Environment=CPA_CONTAINER_SOCKET=/run/cpa-control/model.sock
+Environment=MANAGEMENT_STATIC_PATH=/opt/cpa-portable/static
+ExecStartPre=/usr/bin/python3 -B /opt/cpa-portable/linux/preflight.py central /opt/cpa-portable
+ExecStart=/usr/bin/python3 -B /opt/cpa-portable/linux/network_guard.py -- /opt/cpa-portable/central/cli-proxy-api-linux-arm64 -config /var/lib/cpa-central/config.yaml -local-model
+WorkingDirectory=/var/lib/cpa-central
+ReadWritePaths=/var/lib/cpa-central
+InaccessiblePaths=-/var/lib/cpa-broker -/run/docker.sock -/var/run/docker.sock
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+TimeoutStopSec=3700
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+{
+  "url": "https://raw.githubusercontent.com/microsoft/playwright/v1.56.1/utils/docker/seccomp_profile.json",
+  "sha256": "efc260399ed94757d9b66382137a7cae0c7716608c8b0e77f11f465eb148f7fc",
+  "upstream_sha256": "cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849",
+  "adaptation": "Allow chroot syscall for Chromium user-namespace sandbox; do not grant host-namespace SYS_CHROOT capability."
+}

@@ -1,0 +1,20 @@
+{
+  "A": {
+    "proxy_port": 1081,
+    "origin_port": 18081,
+    "egress": "203.0.113.1",
+    "timezone": "Asia/Tokyo"
+  },
+  "B": {
+    "proxy_port": 1082,
+    "origin_port": 18082,
+    "egress": "203.0.113.2",
+    "timezone": "America/New_York"
+  },
+  "RESEARCH-03": {
+    "proxy_port": 1083,
+    "origin_port": 18083,
+    "egress": "203.0.113.3",
+    "timezone": "Europe/London"
+  }
+}

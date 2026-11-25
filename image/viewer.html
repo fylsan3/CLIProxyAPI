@@ -1,0 +1,27 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>容器远程浏览器</title>
+<style>*{box-sizing:border-box}html,body{margin:0;height:100%;font:14px system-ui;color:#2d2a26}body{display:flex;flex-direction:column;background:#2d2a26}header{display:flex;align-items:center;gap:6px;padding:6px 8px;flex-wrap:wrap;background:#faf9f5}button,input{font:inherit;padding:4px 8px}input{width:12em}button{cursor:pointer;min-height:36px;border:1px solid #d5d2cb;border-radius:6px;background:#f0eee8;color:#2d2a26}button:disabled{opacity:.5;cursor:wait}button:focus-visible,input:focus-visible{outline:2px solid #726d67;outline-offset:2px}#screen{min-height:0;flex:1}#state{margin-left:auto}</style>
+<header><button id="restore" disabled>展开浏览器</button><button id="address">地址栏</button><button id="tab">新标签页</button><button id="back">后退</button><input id="text" maxlength="512" aria-label="发送到当前焦点的文字" placeholder="中文或粘贴文字"><button id="send">发送文字</button><button id="full">全屏</button><span id="state" role="status">正在连接</span></header><div id="screen"></div>
+<script type="module">
+import RFB from './core/rfb.js';
+const $=id=>document.getElementById(id), display=$('screen');
+const password=location.hash.slice(1);
+const ws=new URL('websockify',location.href);ws.protocol=location.protocol==='https:'?'wss:':'ws:';ws.hash='';
+const rfb=new RFB(display,ws.href,{credentials:{password}});
+rfb.scaleViewport=true;rfb.clipViewport=false;rfb.resizeSession=false;
+rfb.addEventListener('connect',()=>{$('state').textContent='已连接';$('restore').disabled=false;rfb.focus()});
+rfb.addEventListener('disconnect',()=>{$('state').textContent='连接已关闭，请回管理页重新进入';$('restore').disabled=true});
+rfb.addEventListener('securityfailure',()=>{$('state').textContent='会话已失效，请从管理页重新打开'});
+function shortcut(mod,code,sym,key){rfb.focus();rfb.sendKey(mod,code,true);rfb.sendKey(sym,key);rfb.sendKey(mod,code,false)}
+$('restore').onclick=async()=>{
+ const button=$('restore');button.disabled=true;$('state').textContent='正在展开浏览器…';
+ try{const response=await fetch(new URL('restore-browser',location.href),{method:'POST',headers:{'X-Desktop-Action':'restore'}});if(!response.ok)throw Error('restore_failed');$('state').textContent='浏览器已展开';rfb.focus();}
+ catch{$('state').textContent='未能展开，请回管理页重新进入浏览器。';}
+ finally{button.disabled=false;}
+};
+$('address').onclick=()=>shortcut(0xffe3,'ControlLeft',108,'KeyL');
+$('tab').onclick=()=>shortcut(0xffe3,'ControlLeft',116,'KeyT');
+$('back').onclick=()=>shortcut(0xffe9,'AltLeft',0xff51,'ArrowLeft');
+$('send').onclick=()=>{const field=$('text');rfb.focus();for(const ch of field.value){const u=ch.codePointAt(0);rfb.sendKey(u<256?u:0x01000000+u,'Unidentified')}field.value=''};
+$('full').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch{$('state').textContent='请在独立窗口中全屏'}};
+</script></html>

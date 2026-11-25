@@ -1,0 +1,8 @@
+{
+  "app": "/opt/cpa-portable",
+  "network_config": "/etc/cpa-test/network.json",
+  "port": 8318,
+  "architecture": "arm64",
+  "target_host_verified": false,
+  "installed": false
+}

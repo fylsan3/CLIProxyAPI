@@ -1,0 +1,37 @@
+[Unit]
+StartLimitIntervalSec=0
+Description=CPA account container controller
+Wants=docker.service
+After=docker.service local-fs.target
+RequiresMountsFor=/var/lib/cpa-broker
+[Service]
+Type=simple
+User=cpa-broker
+Group=cpa-control
+SupplementaryGroups=cpa-broker docker
+RuntimeDirectory=cpa-control
+RuntimeDirectoryMode=0750
+Environment=CPA_DOCKER_BINARY=/usr/bin/docker
+Environment=CPA_DOCKER_HOST=unix:///var/run/docker.sock
+ExecStartPre=/usr/bin/python3 -B /opt/cpa-portable/linux/preflight.py broker /opt/cpa-portable
+ExecStart=/usr/bin/python3 -B /opt/cpa-portable/broker.py /var/lib/cpa-broker/private /run/cpa-control/model.sock --control-group cpa-control
+WorkingDirectory=/var/lib/cpa-broker
+ReadWritePaths=/var/lib/cpa-broker /run/cpa-control
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+TimeoutStopSec=3700
+[Install]
+WantedBy=multi-user.target
