@@ -128,6 +128,21 @@ class Control(base.Control):
         self.wait_started(card)
         return card
 
+    def proxy_url(self, owner):
+        # An authenticated, explicit management action; never add secrets to snapshots/logs.
+        from urllib.parse import quote
+        card=self.load(owner)
+        raw=docker('run','--rm','--pull=never','--network','none','--read-only','--cap-drop','ALL',
+                   '--security-opt','no-new-privileges','--user','1001:1001',
+                   '--mount','type=volume,source='+card['network_config']+',target=/network-config,readonly',
+                   '--entrypoint','python3',card['image'],'-c',
+                   "from pathlib import Path;import sys;sys.stdout.buffer.write(Path('/network-config/config.json').read_bytes())")
+        if hashlib.sha256(raw.encode()).hexdigest()!=card['network_config_sha256']:raise ValueError('network_config_changed')
+        cfg=json.loads(raw);host=cfg['proxy_ip'];host='['+host+']' if ':' in host else host
+        value='socks5h://'+quote(cfg['username'],safe='')+':'+quote(cfg['password'],safe='')+'@'+host+':'+str(cfg['proxy_port'])
+        parse_proxy(value)
+        return value
+
     def wait_started(self, card, timeout=45):
         # Readiness checks only; never call a model or open the browser.
         import base64

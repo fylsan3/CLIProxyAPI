@@ -45,6 +45,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path!='/v8/management/account-environments/action':return self.send(405,{})
         value=json.loads(self.rfile.read(int(self.headers.get('Content-Length','0'))));actions.append({k:v for k,v in value.items() if k!='proxy_url'});action=value.get('action')
         if action=='register':registered.append({'slug':value['slug'],'label':value['label'],'provider':value['provider'],'reason':'missing','overall_ready':False,'protection':{'phase':'not_created'},'attempts':[]});return self.send(200,{'ok':True})
+        if action=='proxy-view':return self.send(200,{'proxy_url':'socks5h://fictional-user:fictional-password@192.0.2.10:1080'})
         if action=='logging-update':logging=value['value'];return self.send(200,{'ok':True})
         if action in ('open-browser','auth-begin'):return self.send(200,{'viewer_url':'http://127.0.0.1:'+str(self.server.server_port)+'/viewer-demo.html'})
         return self.send(200,{'ok':True})

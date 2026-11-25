@@ -1,5 +1,5 @@
 'use strict';
-const tokenKey='native-refresh-view';const pending={};const proxies={};const viewers={};let trackedAuthorization='';let working=false;
+const tokenKey='native-refresh-view';const pending={};const proxies={};const revealedProxies={};const viewers={};let trackedAuthorization='';let working=false;let confirming=false;
 if(location.hash.length>1){sessionStorage.setItem(tokenKey,location.hash.slice(1));history.replaceState(null,'',location.pathname);}
 const labels={account_ready:'可接单',invalid_account_id:"账号编号格式有误，请使用小写英文字母、数字和中划线，末尾不能为中划线",invalid_account_label:"显示名称须为 1—60 个字符，不能含首尾空格或控制字符",provider_not_available:"当前运行配置不支持该提供方，请检查配置",account_already_registered:"该编号已绑定其他账号记录，请使用新的编号",account_not_registered:"未找到账号记录，请先添加账号",browser_sandbox_unavailable:"浏览器安全隔离检查未通过，窗口已关闭；请检查容器安全规则",browser_start_failed:"容器浏览器启动失败，请检查浏览器运行环境",stop_account_before_restore:"请先停止该账号容器再恢复，当前数据不会被覆盖",backup_card_changed:"备份不属于当前账号环境，已拒绝恢复",backup_package_changed:"备份文件发生变化，已拒绝恢复",backup_credentials_older_than_local:"备份凭据比本地旧，已拒绝覆盖",backup_restore_failed:"备份校验或恢复未完成，原账号数据已保留",account_proxy_unavailable:"账号代理或出口检查失败，已停派",network_status_unknown:"网络检查状态无法确认，已停派",environment_backup_required:'环境备份未通过，暂不派单',environment_protection_unknown:'环境保护状态无法确认，暂不派单',missing:'尚未创建',container_stopped:'容器已停止',worker_unavailable:'执行器不可用',binding_check_failed:'容器或数据盘归属检查失败',credential_save_failed:'凭据保存失败',offline_ready:'离线测试可接单',authorization_pending:'正在等待授权',authorization_required:'需要授权',credential_expired:'访问凭据已到期，已停派',credential_rejected:'访问凭据被拒，已停派',account_disabled:'账号已停用',account_unavailable:'账号不可用或冷却中'};
 Object.assign(labels,creationErrors);
@@ -33,14 +33,14 @@ function renderCard(p,data){
  renderCreation(main,p);
  const actions=text(main,'div','','actions');
  if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase)){
-  const label=text(main,'label','账号 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='password';input.autocomplete='off';input.placeholder='socks5h://用户名:密码@IP:端口';input.value=proxies[p.slug]||'';input.dataset.owner=p.slug;input.addEventListener('input',()=>proxies[p.slug]=input.value);label.append(input);main.append(actions);
+  const label=text(main,'label','账号 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='text';input.spellcheck=false;input.autocomplete='off';input.placeholder='socks5h://用户名:密码@IP:端口';input.value=proxies[p.slug]||'';input.dataset.owner=p.slug;input.addEventListener('input',()=>proxies[p.slug]=input.value);label.append(input);main.append(actions);
  }
  function action(parent,operation,label,secondary=false){const b=text(parent,'button',label,secondary?'secondary':'');b.dataset.focusId=p.slug+':'+operation;b.disabled=working;b.addEventListener('click',()=>operate(p.slug,operation));return b;}
  if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase))action(actions,'create','校验代理并创建容器');
  if(p.reason==='authorization_required')action(actions,'auth-begin','打开浏览器授权');
  if(p.reason==='authorization_pending'){
   if(viewers[p.slug]){const link=text(actions,'a','进入容器浏览器','button-link');link.href=viewers[p.slug];link.target='_blank';link.rel='noreferrer noopener';}
-  action(actions,'open-browser','展开 / 重新进入浏览器',!!viewers[p.slug]);action(actions,'auth-cancel','取消授权',true);
+  action(actions,'open-browser','展开 / 重新进入浏览器',!!viewers[p.slug]);action(actions,'auth-cancel','取消本次授权',true);
  }
  if(p.reason==='container_stopped')action(actions,'restart','重启容器');
  if(p.reason==='account_proxy_unavailable')action(actions,'restart','重新检查网络');
@@ -49,6 +49,10 @@ function renderCard(p,data){
  const details=text(card,'details','','account-detail');text(details,'summary','环境、授权与用量详情').dataset.focusId=p.slug+':details';details.open=expandedAccounts.has(p.slug);details.addEventListener('toggle',()=>{if(details.isConnected){if(details.open)expandedAccounts.add(p.slug);else expandedAccounts.delete(p.slug);}});
  const content=text(details,'div','','detail-content');let section=detail(content,'环境与网络');
  text(section,'p','容器编号：'+(p.container?p.container.slice(0,12):'未创建'));text(section,'p','中央调度：'+(centralLabels[central.reason]||'未知'));
+ if(p.container){
+  if(revealedProxies[p.slug]){const label=text(section,'label','已绑定的 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='text';input.readOnly=true;input.value=revealedProxies[p.slug];input.autocomplete='off';input.spellcheck=false;label.append(input);const hide=text(section,'button','收起 SOCKS 地址','secondary');hide.onclick=()=>{delete revealedProxies[p.slug];refresh(true);};}
+  else action(section,'proxy-view','查看 SOCKS 地址（明文）',true);
+ }
  if(central.retry_after)text(section,'p','下次可重试：'+new Date(central.retry_after).toLocaleString());
  if(p.network){text(section,'p',p.network.healthy?'启动网络检查通过；不进行定时公网出口探测。':'网络检查未通过或本地监督失联，已暂停新任务。');if(p.network.fixed_timezone)text(section,'p','固定时区：'+p.network.fixed_timezone+' · 系统与浏览器语言：英语');if(p.network.observed_timezone&&p.network.timezone_warning)text(section,'p','本次出口时区：'+p.network.observed_timezone);if(p.network.network_checked_at)text(section,'p','启动检查：'+new Date(p.network.network_checked_at*1000).toLocaleString());if(p.network.last_success_at)text(section,'p','最近检查成功：'+new Date(p.network.last_success_at*1000).toLocaleString());if(p.network.checking)text(section,'p','正在检查代理和公网出口…');}
  if(p.exit_code!==undefined)text(section,'p','容器退出码：'+p.exit_code);
@@ -99,17 +103,25 @@ async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].include
 document.querySelector('#refresh').addEventListener('click',()=>refresh(true));refresh();setInterval(()=>{if(!document.hidden)refresh();},5000);
 
 async function operate(slug,action){
- if(working)return;working=true;const progress=document.querySelector('#progress');
+ if(working||confirming)return;
+ if(action==='auth-cancel'){
+  confirming=true;const dialog=document.querySelector('#cancel-auth-dialog');document.querySelector('#cancel-auth-account').textContent=currentProjects.find(p=>p.slug===slug)?.label||slug;dialog.returnValue='';
+  const accepted=await new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.showModal();});confirming=false;
+  if(!accepted)return;
+ }
+ working=true;const progress=document.querySelector('#progress');
  const messages={'backup-export':'已请求更新加密备份，执行器继续运行…','backup-restore':'正在验证备份并恢复到新数据卷，保留原数据…','retry-backup':'正在使用已保存的授权重新备份和校验，不重新登录…',create:'正在校验代理配置、准备容器并检查网络…','auth-begin':'正在启动容器浏览器和授权回调…','open-browser':'正在恢复窗口并连接原来的容器浏览器…','close-browser':'正在关闭容器浏览器…','auth-complete':'正在保存凭据、关闭浏览器并校验完整环境备份…','auth-cancel':'正在取消授权…','auth-refresh':'正在立即刷新凭据；有效访问凭据仍可接单…',restart:'正在重启并核对持久状态…'};
- progress.textContent=messages[action];document.querySelectorAll('article button').forEach(b=>b.disabled=true);
+ progress.textContent=action==='proxy-view'?'正在读取此账号已绑定的 SOCKS 地址…':messages[action];document.querySelectorAll('article button').forEach(b=>b.disabled=true);
  if(action==='create'){const card=[...accounts.querySelectorAll('.account-card')].find(c=>c.dataset.account===slug);if(card)text(card.querySelector('.card-main'),'p','正在提交创建请求…','creation-submitting').setAttribute('role','status');}
  try{const body={slug,action};if(action==='create')body.proxy_url=proxies[slug];if(action==='auth-complete')body.state=pending[slug];
  const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json','X-Offline-View':sessionStorage.getItem(tokenKey)},body:JSON.stringify(body)});const data=await r.json();
  if(!r.ok){const code=data.error?.message||data.error;throw Error(labels[code]||'刷新或操作未完成，请查看账号的服务状态与刷新状态。');}
  if(data.viewer_url){viewers[slug]=data.viewer_url;trackedAuthorization=slug;}
+ if(action==='proxy-view')revealedProxies[slug]=data.proxy_url;
  if(action==='create')delete proxies[slug];
  if(action==='auth-complete'||action==='auth-cancel')delete pending[slug];
- progress.textContent=data.queued?'加密备份已排队，稍后自动更新结果；不额外停止调用。':data.viewer_url?'浏览器已启动，请点击账号卡片里的「进入容器浏览器」。授权后会自动关闭浏览器、备份并检查派单条件。':'操作已完成，账号状态已更新。';
+ if(action==='auth-cancel'){delete viewers[slug];if(trackedAuthorization===slug)trackedAuthorization='';}
+ progress.textContent=action==='proxy-view'?'已显示此账号绑定的 SOCKS 地址。':action==='auth-cancel'?'已取消本次授权并关闭浏览器，账号与容器保留。':data.queued?'加密备份已排队，稍后自动更新结果；不额外停止调用。':data.viewer_url?'浏览器已启动，请点击账号卡片里的「进入容器浏览器」。授权后会自动关闭浏览器、备份并检查派单条件。':'操作已完成，账号状态已更新。';
  }catch(e){progress.textContent=e.message;}finally{working=false;await refresh(true);}
 }
 

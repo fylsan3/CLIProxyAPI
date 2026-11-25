@@ -30,7 +30,7 @@ def build_control():
  run([sys.executable,'-B',str(ROOT/'build_page.py')])
  for p in ROOT.rglob('*'):
   if p.is_file() and allowed(str(p.relative_to(ROOT))):manifest['files'][str(p.relative_to(ROOT))]=digest(p)
- manifest['ui_revision']='accounts-ui2'
+ manifest['ui_revision']='accounts-ui3'
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
 def build(images=True):

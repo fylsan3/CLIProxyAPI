@@ -9,13 +9,14 @@ import socketserver
 import subprocess
 import threading
 from urllib.parse import urlsplit
+from pathlib import Path
 
 TUNNEL="""import os,select,socket
 with socket.create_connection(('127.0.0.1',6081),timeout=4) as s:
  s.setblocking(True)
  while True:
   ready,_,_=select.select([0,s],[],[],90)
-  if not ready:break
+  if not ready:continue
   if 0 in ready:
    b=os.read(0,65536)
    if not b:break
@@ -27,6 +28,7 @@ with socket.create_connection(('127.0.0.1',6081),timeout=4) as s:
 """
 class Relay(socketserver.ThreadingTCPServer):
     daemon_threads=True
+    request_queue_size=64
     def __init__(self,cli,ident,session,guard,restore):
         self.guard=guard
         self.restore=restore
@@ -76,6 +78,10 @@ class Handler(socketserver.BaseRequestHandler):
         target=path[len(prefix):]
         if not re.fullmatch(r'[A-Za-z0-9_./-]+',target) or '..' in target.split('/'):return
         if is_ws and target!='websockify':return
+        if not is_ws and target=='desktop.html':
+            server.guard()
+            payload=(Path(__file__).resolve().parent/'ui/desktop.html').read_bytes()
+            s.sendall(('HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nContent-Length: '+str(len(payload))+'\r\n\r\n').encode()+payload);return
         if not is_ws:
             lines=[line for line in lines if not line.lower().startswith('connection:')]
             lines.append('Connection: close')
@@ -84,6 +90,7 @@ class Handler(socketserver.BaseRequestHandler):
         server.guard()
         p=subprocess.Popen(server.cmd,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
         try:
+            response_head=b'';head_sent=is_ws
             p.stdin.write(('\r\n'.join(lines)+'\r\n\r\n').encode('latin1')+body);p.stdin.flush()
             while not server.closed.is_set():
                 readable,_,_=select.select([s,p.stdout],[],[],1)
@@ -94,6 +101,15 @@ class Handler(socketserver.BaseRequestHandler):
                 if p.stdout in readable:
                     b=os.read(p.stdout.fileno(),65536)
                     if not b:break
+                    if not head_sent:
+                        response_head+=b
+                        if b'\r\n\r\n' not in response_head:
+                            if len(response_head)>65536:raise ValueError('desktop_response_header_too_large')
+                            continue
+                        raw_head,_,payload=response_head.partition(b'\r\n\r\n')
+                        fields=[line for line in raw_head.split(b'\r\n') if not line.lower().startswith((b'connection:',b'keep-alive:'))]
+                        b=b'\r\n'.join(fields)+b'\r\nConnection: close\r\n\r\n'+payload
+                        head_sent=True;response_head=b''
                     s.sendall(b)
         finally:
             with contextlib.suppress(OSError):p.stdin.close()

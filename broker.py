@@ -208,6 +208,7 @@ class Broker:
             return 200,{'requests':groups}
         if set(body)-{'slug','code','state','proxy_url'}:raise PolicyError('invalid_request')
         owner=self.registry.get(body.get('slug',''))['owner']
+        if action=='proxy-view':return 200,{'proxy_url':self.protection.control.proxy_url(owner)}
         if action=='create':return 200,self.create(owner,body.get('proxy_url'))
         if action=='restart':
             self.protection.restart(owner);return 200,self.status(owner)

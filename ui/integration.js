@@ -3,7 +3,7 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui2';
+  host.dataset.uiRevision = 'accounts-ui3';
   const root = host.attachShadow({mode:'open'});
   nativeDocument.body.prepend(host);
   const bridgeStyle = nativeDocument.createElement('style');

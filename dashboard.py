@@ -30,7 +30,7 @@ def action(broker, body):
             known={'invalid_account_id','invalid_account_label','provider_not_available','account_already_registered'}
             return 400,{'error':str(error) if str(error) in known else 'invalid_request'}
     allowed = {'create', 'restart', 'auth-begin', 'auth-cancel', 'auth-refresh',
-               'retry-backup', 'open-browser', 'close-browser', 'backup-export', 'backup-restore'}
+               'retry-backup', 'open-browser', 'close-browser', 'backup-export', 'backup-restore','proxy-view'}
     expected = {'action', 'slug', 'proxy_url'} if operation == 'create' else {'action', 'slug'}
     if operation not in allowed or set(body) != expected or not valid_slug(body.get('slug')):
         return 400, {'error': 'invalid_request'}
