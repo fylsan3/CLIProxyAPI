@@ -3,7 +3,10 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui3';
+  host.dataset.uiRevision = 'accounts-ui4';
+  const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
+  syncStatusTheme();
+  new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
   const root = host.attachShadow({mode:'open'});
   nativeDocument.body.prepend(host);
   const bridgeStyle = nativeDocument.createElement('style');

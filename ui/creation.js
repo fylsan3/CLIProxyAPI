@@ -33,7 +33,7 @@ function renderCreation(parent,p) {
  if(!record.creation_steps?.length&&!['creating','creation_failed'].includes(record.phase))return;
  const block=text(parent,'section','','creation-progress');block.setAttribute('aria-label','创建进度');
  const failed=record.phase==='creation_failed',running=record.phase==='creating';
- const header=text(block,'div','','creation-heading');text(header,'h3',failed?'创建失败':running?'正在创建环境':'环境启动完成');
+ const header=text(block,'div','','creation-heading');text(header,'h3',failed?'创建失败':running?'正在创建环境':'环境启动完成',failed?'status-bad':running?'':'status-ok');
  const steps=record.creation_steps||[],current=steps.find(s=>s.status==='running');
  text(header,'span',running?(creationStages.find(([key])=>key===current?.step)?.[1]||'正在准备…'):failed?'请查看下方原因':record.phase==='awaiting_authorization'?'等待浏览器授权':'创建记录','muted');
  if(failed)text(block,'p',creationErrors[record.creation_error]||'上次创建未完成，旧版本没有保存具体原因。再次检查后会显示失败步骤。','creation-error');

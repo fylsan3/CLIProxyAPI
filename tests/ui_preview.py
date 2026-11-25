@@ -16,6 +16,13 @@ def snapshot():
         a.update(overall_ready=False,reason='missing',container=None,state=None,network=None,protection={'phase':'creating','backup_verified':False,'creation_steps':[{'step':'checking_socks','status':'completed','started_at':1795590000},{'step':'checking_exit','status':'running','started_at':1795590001}]})
         if mode=='creation-error':a['protection'].update(phase='creation_failed',creation_error='proxy_auth_rejected',creation_steps=[{'step':'checking_socks','status':'failed','started_at':1795590000}])
         sample['projects']=[a]
+    if mode=='status-colors':
+        a['attempts']=[{'state':'completed','status':200,'id':'fictional-success'}]
+        b.update(label='研发账号 B · 代理异常',reason='account_proxy_unavailable',network={'healthy':False},protection={'phase':'backup_failed','initial_backup':True,'backup_verified':False},central_dispatch={'reason':'unavailable'})
+        b['state'].update(renewal_state='retry_scheduled',authorization_issue='authorization_expired')
+        b['portable_backup'].update(state='not_exported',warning=True)
+        b['attempts']=[{'state':'completed','status':403,'id':'fictional-rejected'}]
+        sample['projects']=[a,b]
     if mode=='long':a['label']='跨区域研发账号与自动化任务测试环境—这是一个特别长的显示名称';sample['projects']=[a,b]
     sample['projects']+=registered
     return sample
