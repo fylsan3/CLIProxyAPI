@@ -39,16 +39,41 @@ class Protection:
         return record
 
     def create(self, owner, proxy_url):
+        from creation_progress import CreationFailure, safe_error, STEPS
         with self.lock_for(owner):
-            self.phase(owner, 'creating', backup_verified=False)
+            self.phase(owner, 'creating', backup_verified=False, creation_steps=[], creation_error=None,
+                       creation_started_at=int(time.time()), creation_finished_at=None)
+            current='checking_socks'
+            def progress(step):
+                nonlocal current
+                if step not in STEPS:raise ValueError('invalid_creation_step')
+                current=step;record=self.state(owner);steps=record.get('creation_steps',[])
+                stamp=int(time.time())
+                if steps and steps[-1]['status']=='running':steps[-1].update(status='completed',finished_at=stamp)
+                steps.append({'step':step,'status':'running','started_at':stamp})
+                self.phase(owner,'creating',creation_steps=steps[-len(STEPS):])
             try:
-                card = self.control.create(owner, proxy_url)
+                card = self.control.create(owner, proxy_url, progress=progress)
+                steps=self.state(owner)['creation_steps']
+                if steps:steps[-1].update(status='completed',finished_at=int(time.time()))
                 self.phase(owner, 'awaiting_authorization', initial_backup=True,
-                           environment_id=card['environment_id'])
+                           environment_id=card['environment_id'],creation_steps=steps,creation_finished_at=int(time.time()))
                 return card
-            except BaseException:
-                self.phase(owner, 'creation_failed')
-                raise
+            except BaseException as error:
+                code=safe_error(error,current);steps=self.state(owner).get('creation_steps',[])
+                if not steps:steps=[{'step':current,'status':'running','started_at':int(time.time())}]
+                steps[-1].update(status='failed',finished_at=int(time.time()))
+                self.phase(owner, 'creation_failed', creation_steps=steps,creation_error=code,creation_finished_at=int(time.time()))
+                print(json.dumps({'event':'account_creation_failed','owner':owner,'step':current,'code':code}),flush=True)
+                if isinstance(error,(KeyboardInterrupt,SystemExit)):raise
+                raise CreationFailure(code) from None
+
+    def recover_creation(self, owner):
+        record=self.state(owner)
+        if record.get('phase')!='creating':return
+        steps=record.get('creation_steps',[])
+        if steps and steps[-1].get('status')=='running':steps[-1].update(status='failed',finished_at=int(time.time()))
+        self.phase(owner,'creation_failed',creation_steps=steps,creation_error='creation_interrupted',creation_finished_at=int(time.time()))
 
     def browser_closed(self, card):
         result = subprocess.run([*DOCKER, 'exec', '--user', '1001:1001', '-i', card['container'], 'python3', '-B',

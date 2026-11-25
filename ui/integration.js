@@ -3,7 +3,7 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui1';
+  host.dataset.uiRevision = 'accounts-ui2';
   const root = host.attachShadow({mode:'open'});
   nativeDocument.body.prepend(host);
   const bridgeStyle = nativeDocument.createElement('style');
@@ -92,6 +92,7 @@
     }
     __QUOTA__
     __SETTINGS__
+    __PROGRESS__
     __APP__
   }
   session.subscribe((next, before) => {

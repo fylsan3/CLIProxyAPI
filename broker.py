@@ -12,6 +12,7 @@ from version import release_info
 from account_registry import Registry,PROVIDERS
 from account_identity import owner_for,valid_slug
 from protection import Protection
+from creation_progress import CreationFailure
 from browser_control import Browsers
 from central_view import central_request,merge_central
 
@@ -44,7 +45,9 @@ class Broker:
             db.execute("UPDATE attempts SET state='result_unknown' WHERE state IN ('running','preparing')")
         from portable_backup import Packages
         self.packages=Packages(self)
-        for owner in self.registry.owners():self.packages.commit_restore(owner)
+        for owner in self.registry.owners():
+            self.packages.commit_restore(owner)
+            self.protection.recover_creation(owner)
         self.browsers.recover()
     def available_providers(self):
         mode=self.protection.control.fixture.get('mode','closed_test')
@@ -256,6 +259,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if is_message:return self.messages(raw,body)
             if not self.path.startswith('/admin/'):return self.answer(404,{})
             status,result=self.server.broker.admin(self.path[7:],body,self.connection);self.answer(status,result)
+        except CreationFailure as error:self.answer(503,{'error':{'message':error.code}})
         except (PolicyError,OSError,ValueError,KeyError,subprocess.SubprocessError):self.answer(503,{'error':{'message':'native_worker_unavailable'}})
     def messages(self,raw,body):
         broker=self.server.broker

@@ -12,6 +12,10 @@ def snapshot():
     b=copy.deepcopy(base);b.update(slug='research-b',label='研发账号 B · 待授权',overall_ready=False,reason='authorization_pending',state={'active_calls':0,'revision':0,'authorized':False},protection={'phase':'authorizing','backup_verified':False,'initial_backup':True},central_dispatch={'reason':'unavailable'})
     mode=MODE.read_text().strip() if MODE.exists() else 'populated'
     if mode=='populated':sample['projects']=[a,b]
+    if mode.startswith('creation-'):
+        a.update(overall_ready=False,reason='missing',container=None,state=None,network=None,protection={'phase':'creating','backup_verified':False,'creation_steps':[{'step':'checking_socks','status':'completed','started_at':1795590000},{'step':'checking_exit','status':'running','started_at':1795590001}]})
+        if mode=='creation-error':a['protection'].update(phase='creation_failed',creation_error='proxy_auth_rejected',creation_steps=[{'step':'checking_socks','status':'failed','started_at':1795590000}])
+        sample['projects']=[a]
     if mode=='long':a['label']='跨区域研发账号与自动化任务测试环境—这是一个特别长的显示名称';sample['projects']=[a,b]
     sample['projects']+=registered
     return sample

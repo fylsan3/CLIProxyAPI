@@ -66,10 +66,12 @@ class Control(base.Control):
             common += ['--network','none','--user','1001:1001','-e','NETWORK_STAGE=maintenance']
         return common
 
-    def create(self, owner, proxy_url):
+    def create(self, owner, proxy_url, progress=None):
+        progress = progress or (lambda step: None)
         path = self.card(owner)
         if path.exists():
             raise ValueError('account_card_exists_no_reinitialize')
+        progress('checking_socks')
         supplied = parse_proxy(proxy_url)
         account=self.registry.get(owner.lower());mode=self.fixture.get('mode','closed_test')
         fixture=self.fixture.get('accounts',{}).get(owner)
@@ -88,15 +90,14 @@ class Control(base.Control):
         # No account data volumes exist or are mounted during location discovery.
         probe_name='cpa-locale-'+uuid.uuid4().hex
         try:
-            probe=subprocess.run([*DOCKER,'run','--rm','--name',probe_name,'-i','--network',self.fixture['network'],
-                                  '--read-only','--cap-drop','ALL','--cap-add','NET_ADMIN','--user','0:0',
-                                  '--security-opt','no-new-privileges','--entrypoint','python3',self.image,
-                                  '-B','/opt/native/locale_probe.py'],input=json.dumps(config),text=True,
-                                  capture_output=True,timeout=30)
+            from creation_probe import discover, PROBE_SCRIPT
+            location=discover([*DOCKER,'run','--rm','--name',probe_name,'-i','--network',self.fixture['network'],
+                               '--read-only','--cap-drop','ALL','--cap-add','NET_ADMIN','--user','0:0',
+                               '--security-opt','no-new-privileges','--entrypoint','python3',self.image,
+                               '-B','-c',PROBE_SCRIPT],config,progress)
         finally:
             subprocess.run([*DOCKER,'rm','-f',probe_name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
-        if probe.returncode:raise ValueError('exit_timezone_unavailable')
-        location=json.loads(probe.stdout)
+        progress('reading_environment')
         runtime=json.loads(docker('run','--rm','--network','none','--user','1001:1001',
                                   '-e','NETWORK_STAGE=maintenance','-e','TZ='+location['timezone'],
                                   '--entrypoint','python3',self.image,'-B','/opt/native/retention_cli.py','inventory'))
@@ -107,18 +108,48 @@ class Control(base.Control):
                 'location':location,'volume':name+'-state','backup':name+'-backup','network_config':name+'-network',
                 'network_config_sha256':hashlib.sha256(raw).hexdigest(),'network':self.fixture['network'],'status':'creating'}
         write_json(path,card)
+        progress('preparing_storage')
         for key in ('volume','backup','network_config'):
             docker('volume','create','--label','cpa.retention.id='+ident,card[key])
+        progress('saving_network')
         command=[*DOCKER,'run','--rm','-i','--network','none','--user','1001:1001','--entrypoint','python3',
                  '--mount','type=volume,source='+card['network_config']+',target=/network-config',self.image,'-c',
                  "import sys,os,json;from pathlib import Path;os.umask(0o077);raw=sys.stdin.buffer.read();cfg=json.loads(raw);root=Path('/network-config');(root/'config.json').write_bytes(raw);(root/'timezone').write_text(cfg['timezone']+'\\n');(root/'localtime').write_bytes((Path('/usr/share/zoneinfo')/cfg['timezone']).read_bytes())"]
         subprocess.run(command,input=raw,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        progress('initializing_environment')
         self.helper(card,'initialize')
+        progress('creating_container')
         card['container']=docker('create','--name',name,*self.args(card,runtime=True),self.image)
         card['status']='network_guarded_test'
         write_json(path,card)
+        progress('starting_container')
         self.start(owner)
+        progress('waiting_for_worker')
+        self.wait_started(card)
         return card
+
+    def wait_started(self, card, timeout=45):
+        # Readiness checks only; never call a model or open the browser.
+        import base64
+        from creation_progress import CreationFailure
+        deadline=time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            try:
+                info=self.inspect(card)
+                if not info['State']['Running']:raise CreationFailure('container_start_failed')
+                if self.network_state(info)['healthy']:
+                    result=subprocess.run([*DOCKER,'exec','--user','1001:1001','-i',card['container'],'/opt/native/worker','call'],
+                                          input='{"path":"/health","body":{}}\n',text=True,capture_output=True,timeout=3)
+                    if result.returncode==0:
+                        frames=[json.loads(line) for line in result.stdout.splitlines()]
+                        payload=b''.join(base64.b64decode(f['body'],validate=True) for f in frames if 'body' in f)
+                        state=json.loads(payload)
+                        if frames[0].get('status')==200 and frames[-1].get('done') and state.get('owner')==card['owner']:
+                            return
+            except CreationFailure:raise
+            except (OSError,ValueError,KeyError,IndexError,subprocess.SubprocessError):pass
+            time.sleep(.25)
+        raise CreationFailure('container_readiness_failed')
 
     def load(self, owner):
         card=super().load(owner)

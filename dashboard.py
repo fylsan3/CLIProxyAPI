@@ -40,7 +40,7 @@ def action(broker, body):
         try:
             parse_proxy(body['proxy_url'])
         except (ValueError, TypeError):
-            return 400, {'error': 'invalid_request'}
+            return 400, {'error': 'invalid_proxy_config'}
         args['proxy_url'] = body['proxy_url']
     try:broker.registry.get(body['slug'])
     except ValueError:return 400,{'error':'account_not_registered'}

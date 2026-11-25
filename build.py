@@ -15,6 +15,24 @@ def check_overrides():
  policy=json.loads((ROOT/'header-policy.json').read_text())
  code=(ROOT/'src/internal/util/container_http_headers.go').read_text().split('var containerRequestBlocked = map[string]bool{',1)[1].split('}',1)[0]
  assert set(policy['request_blocked'])==set(re.findall(r'"([^"]+)":\s*true',code)),'header policies diverged'
+def build_control():
+ """Repackage controller/UI changes without rebuilding or replacing any Go binary/image."""
+ from build_inputs import verify_source
+ verify_source(ROOT);check_overrides()
+ manifest=json.loads((ROOT/'release-manifest.json').read_text())
+ def allowed(name):
+  p=Path(name)
+  return (len(p.parts)==1 and p.suffix=='.py') or (p.parts[0]=='ui' and p.suffix in ('.js','.css','.html')) or name=='static/management.local.html'
+ for name,want in manifest['files'].items():
+  if not allowed(name) and digest(ROOT/name)!=want:raise ValueError('control_build_cannot_change: '+name)
+ image=json.loads((ROOT/'image.json').read_text())
+ if any(image[k]!=v for k,v in manifest['images'].items()):raise ValueError('control_build_image_changed')
+ run([sys.executable,'-B',str(ROOT/'build_page.py')])
+ for p in ROOT.rglob('*'):
+  if p.is_file() and allowed(str(p.relative_to(ROOT))):manifest['files'][str(p.relative_to(ROOT))]=digest(p)
+ manifest['ui_revision']='accounts-ui2'
+ (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+ print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
 def build(images=True):
  for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
  from build_inputs import verify_source
@@ -62,4 +80,6 @@ def build(images=True):
  (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'mac-production1','published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
- parser=argparse.ArgumentParser();parser.add_argument('--compile-only',action='store_true');args=parser.parse_args();build(not args.compile_only)
+ parser=argparse.ArgumentParser();modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()
+ if args.control_only:build_control()
+ else:build(not args.compile_only)
