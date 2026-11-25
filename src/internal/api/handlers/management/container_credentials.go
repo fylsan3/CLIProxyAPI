@@ -89,7 +89,7 @@ func (h *Handler) ContainerCredentials(c *gin.Context) {
 		// Worker publishes only explicitly sanitized, non-secret observations.
 		item["container_observation"] = project.State["account_observation"]
 		item["quota"] = project.State["quota_observation"]
-		item["container_capabilities"] = gin.H{"version": 1, "account_update": true, "token_refresh": true, "reset_grant": false}
+		item["container_capabilities"] = gin.H{"version": 1, "account_update": true, "token_refresh": true, "reset_grant": false, "reset_grant_read": true}
 		if !retry.IsZero() {
 			item["next_retry_after"] = retry
 		}

@@ -128,6 +128,57 @@ func cleanUsage(raw []byte) (map[string]any, bool) {
 		}
 		result["limits"] = clean
 	}
+	// Read-only grant facts. Never expose arbitrary upstream fields or claim a grant.
+	if block, ok := v["cedar_ember"].(map[string]any); ok {
+		clean := map[string]any{}
+		for _, key := range []string{"eligible", "at_limit"} {
+			if value, ok := block[key].(bool); ok {
+				clean[key] = value
+			}
+		}
+		if value, ok := block["cooldown_until"].(string); ok {
+			if _, err := time.Parse(time.RFC3339, value); err == nil {
+				clean["cooldown_until"] = value
+			}
+		}
+		grants := []any{}
+		if items, ok := block["grants"].([]any); ok {
+			for _, raw := range items {
+				if len(grants) >= 64 {
+					break
+				}
+				item, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				id, _ := item["id"].(string)
+				if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`).MatchString(id) {
+					continue
+				}
+				g := map[string]any{"id": id}
+				for _, key := range []string{"resets_left", "resets_total"} {
+					if n, ok := item[key].(float64); ok && n >= 0 && n <= 100000 && n == float64(int(n)) {
+						g[key] = n
+					}
+				}
+				for _, key := range []string{"paused", "usable_now", "use_requires_limit"} {
+					if value, ok := item[key].(bool); ok {
+						g[key] = value
+					}
+				}
+				for _, key := range []string{"starts_at", "ends_at"} {
+					if value, ok := item[key].(string); ok {
+						if _, err := time.Parse(time.RFC3339, value); err == nil {
+							g[key] = value
+						}
+					}
+				}
+				grants = append(grants, g)
+			}
+		}
+		clean["grants"] = grants
+		result["cedar_ember"] = clean
+	}
 	return result, true
 }
 func (w *worker) updateAccount(out http.ResponseWriter, req *http.Request) {

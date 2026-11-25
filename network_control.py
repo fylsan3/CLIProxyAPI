@@ -48,7 +48,7 @@ class Control(base.Control):
     def args(self, card, state_volume=None, runtime=False):
         common = ['--pull=never', '--read-only', '--init', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                   '--memory','1g','--pids-limit','300','--shm-size','96m',
-                  '--tmpfs','/tmp:rw,nosuid,nodev,size=192m,mode=1777',
+                  '--tmpfs','/tmp:rw,nosuid,nodev,size=512m,mode=1777',
                   '--label','cpa.retention.id='+card['environment_id'],
                   '--mount','type=volume,source='+(state_volume or card['volume'])+',target=/state',
                   '--mount','type=volume,source='+card['backup']+',target=/backup',

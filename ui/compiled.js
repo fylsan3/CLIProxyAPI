@@ -219,6 +219,29 @@ function renderAccountQuota(parent,p){
  text(wrap,'p','上次观测结果；到重置时间后需更新确认。','help');
 }
 
+function resetGrantSummary(state,now=Date.now()){
+ const observation=state?.account_observation?.usage,block=observation?.values?.cedar_ember;
+ if(!block)return {reported:false,error:observation?.error};
+ const grants=Array.isArray(block.grants)?block.grants:[];
+ let left=0,known=true,usable=0;
+ for(const g of grants){
+  if(!Number.isInteger(g.resets_left)||g.resets_left<0){known=false;continue;}
+  const expired=g.ends_at&&Date.parse(g.ends_at)<=now;
+  if(!expired)left+=g.resets_left;
+  if(!expired&&block.eligible===true&&g.usable_now===true&&g.paused===false&&g.resets_left>0&&(!g.starts_at||Date.parse(g.starts_at)<=now)&&(!block.cooldown_until||Date.parse(block.cooldown_until)<=now)&&(g.use_requires_limit===false||block.at_limit===true))usable+=g.resets_left;
+ }
+ return {reported:true,left:known?left:undefined,usable,grants,stamp:observation.observed_at,error:observation.error};
+}
+function renderResetGrants(parent,p){
+ const view=resetGrantSummary(p.state),section=text(parent,'section','','account-quota');
+ section.setAttribute('aria-label','重置卡');text(section,'strong','重置卡');
+ if(!view.reported){text(section,'p','尚未报告；点击「刷新用量」读取。','help');return;}
+ text(section,'p','剩余 '+(view.left===undefined?'未报告':view.left)+' 次 · 上次报告可用 '+view.usable+' 次');
+ for(const g of view.grants)if(g.ends_at)text(section,'p','有效期至 '+new Date(g.ends_at).toLocaleString(),'help');
+ if(view.error)text(section,'p','本次读取失败，保留上次结果。','status-bad');
+ text(section,'p','目前仅展示，消耗入口尚未开放；刷新用量不会使用重置卡。','help');
+}
+
     'use strict';
 let loggingSaving=false;
 function renderLogging(value){
@@ -381,7 +404,7 @@ function renderCard(p,data){
  if(p.state?.authorization_issue)text(main,'p',authorizationLabels[p.state.authorization_issue]||'授权未完成，请查看详情。','error');
  if(p.state?.storage_warning)text(main,'p','凭据保存或备份异常，请检查存储；有效调用继续按 CPA 原逻辑处理。','error');
  renderCreation(main,p);
- renderAccountQuota(main,p);
+ renderAccountQuota(main,p);renderResetGrants(main,p);
  const actions=text(main,'div','','actions');
  if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase)){
   const label=text(main,'label','账号 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='text';input.spellcheck=false;input.autocomplete='off';input.placeholder='socks5h://用户名:密码@IP:端口';input.value=proxies[p.slug]||'';input.dataset.owner=p.slug;input.addEventListener('input',()=>proxies[p.slug]=input.value);label.append(input);main.append(actions);

@@ -107,6 +107,9 @@ def run():
     action('retry-backup',owner);wait(lambda:project(owner).get('overall_ready'))
     assert worker(owner,'/health')[1]['revision']==1
     print('Authorized fictional '+owner,flush=True)
+   # Old runtime predates blank-page reentry: open a local fixture authorization page, without approving it.
+   opened=subprocess.run(CLI+['exec','--user','1001:1001','-i',cards['A']['container'],'python3','-B','/opt/sample/worker.py','request'],input=json.dumps({'op':'open-browser','url':'https://claude.ai/oauth/authorize?state=offline-no-consent'}),text=True,capture_output=True,timeout=30,check=True)
+   assert json.loads(opened.stdout).get('browser'),opened.stdout
    # Stop only this temporary central service before explicit migration.
    stop(process);process=None
    from upgrade_accounts import migrate

@@ -80,7 +80,7 @@ function renderCard(p,data){
  if(p.state?.authorization_issue)text(main,'p',authorizationLabels[p.state.authorization_issue]||'授权未完成，请查看详情。','error');
  if(p.state?.storage_warning)text(main,'p','凭据保存或备份异常，请检查存储；有效调用继续按 CPA 原逻辑处理。','error');
  renderCreation(main,p);
- renderAccountQuota(main,p);
+ renderAccountQuota(main,p);renderResetGrants(main,p);
  const actions=text(main,'div','','actions');
  if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase)){
   const label=text(main,'label','账号 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='text';input.spellcheck=false;input.autocomplete='off';input.placeholder='socks5h://用户名:密码@IP:端口';input.value=proxies[p.slug]||'';input.dataset.owner=p.slug;input.addEventListener('input',()=>proxies[p.slug]=input.value);label.append(input);main.append(actions);

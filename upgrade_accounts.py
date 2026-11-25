@@ -26,6 +26,15 @@ def migrate(state,owner):
   suffix='-upgrade-'+uuid.uuid4().hex[:8]
   for key in ('volume','backup'):new[key]=old[key]+suffix
   record={'old':old,'new':new,'old_protection':old_protection,'phase':'prepared'};write_json(transaction,record)
+  # Flush a live browser profile before copying its data. Never reopen or reauthorize it.
+  def browser(op):
+   p=subprocess.run(DOCKER+['exec','--user','1001:1001','-i',old['container'],'python3','-B','/opt/sample/worker.py','request'],input=json.dumps({'op':op}),capture_output=True,text=True,timeout=25,check=True)
+   value=json.loads(p.stdout)
+   if value.get('error') or value.get('owner')!=owner:raise ValueError('browser_profile_close_unverified')
+   return value
+  if browser('status').get('browser'):
+   closed=browser('close-browser')
+   if closed.get('browser') or closed.get('browser_close')!='graceful':raise ValueError('browser_profile_close_unverified')
   # Drain completed before entry; never authorizes or refreshes an account.
   docker('stop','-t','30',old['container']);stopped=True
   for key in ('volume','backup'):docker('volume','create','--label','cpa.retention.id='+old['environment_id'],new[key])

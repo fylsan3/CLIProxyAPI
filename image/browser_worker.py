@@ -42,15 +42,28 @@ if sys.argv[1]=="request":
 class Worker:
     def __init__(self):
         self.desktop=Desktop();self.lock=threading.Lock();self.browser=None;self.seen=threading.Event();self.consent=threading.Event();self.ack=threading.Event();self.path=""
-        self.last_close=None;self.target=None;self.sandbox=None
+        self.last_close=None;self.target=None;self.sandbox=None;self.diagnostics=[];self.diagnostic_reader=None
         self.store=None;self.failure=None
         try:self.store=ProfileStore(state,owner)
         except (ProfileError,OSError,ValueError) as error:
             self.failure=str(error) if isinstance(error,ProfileError) else 'profile_storage_unsafe'
         self.project=state/"note.txt"
         if self.store and not self.project.exists():self.project.write_text("sample project "+owner+"\n"+secrets.token_hex(12)+"\n")
+    def record_stderr(self, stream):
+        # Never retain raw Chromium logs: URLs and user content may appear there.
+        patterns={b'No space left on device':'temporary_storage_full',b'Cannot allocate memory':'allocation_failed',
+                  b'Out of memory':'allocation_failed',b'pthread_create':'thread_creation_failed',
+                  b'FATAL:':'browser_fatal',b'Received signal 5':'renderer_signal_5'}
+        for line in iter(lambda:stream.readline(8192),b''):
+            for token,code in patterns.items():
+                if token in line and code not in self.diagnostics:
+                    self.diagnostics.append(code)
+                    try:save('browser-diagnostics.json',{'observed_at':int(time.time()),'codes':list(self.diagnostics)})
+                    except OSError:pass
+        stream.close()
     def data(self):
         result={"owner":owner,"host":socket.gethostname(),"granted":False,"browser":bool(chrome_pids()),"receipt":None,
+                "diagnostics":list(self.diagnostics),
                 "sandbox":self.sandbox if self.browser and self.browser.poll() is None else None,
                 "profile":self.store.status if self.store else "blocked",
                 "startup_error":self.failure,"profile_persistent":bool(self.store),
@@ -94,6 +107,7 @@ class Worker:
                 except ProcessLookupError:pass
         end=time.monotonic()+2
         while managed and chrome_pids() and time.monotonic()<end:time.sleep(.05)
+        if self.diagnostic_reader:self.diagnostic_reader.join(timeout=.5)
         self.desktop.close();self.path=""
     def expire(self,expected):
         with self.lock:
@@ -118,14 +132,15 @@ class Worker:
                     raise ValueError('authorization_url_rejected')
                 self.target=target
                 if self.browser is None or self.browser.poll() is not None:
-                    self.close();self.seen.clear();self.ack.clear();self.consent.clear()
+                    self.close();self.seen.clear();self.ack.clear();self.consent.clear();self.diagnostics=[]
                     self.path="/"+secrets.token_hex(18)
                     binaries=[p for p in Path("/ms-playwright").glob("chromium-*/**/chrome") if p.is_file()]
                     if not binaries:raise ValueError("chromium_missing")
                     self.store.before_open(bool(chrome_pids()))
                     self.desktop.env['HOME']=str(self.store.home)
                     self.desktop.start()
-                    self.browser=subprocess.Popen([str(binaries[0]),"--ozone-platform=x11","--lang=en-US","--start-maximized","--disable-dev-shm-usage","--disable-background-networking","--disable-crash-reporter","--no-first-run","--proxy-server=socks5://127.0.0.1:1080","--proxy-bypass-list=localhost;127.0.0.1;[::1]","--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]","--window-size=1100,760","--user-data-dir="+str(self.store.profile),self.target],env=self.desktop.env,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                    self.browser=subprocess.Popen([str(binaries[0]),"--ozone-platform=x11","--lang=en-US","--start-maximized","--disable-dev-shm-usage","--disable-background-networking","--disable-crash-reporter","--no-first-run","--proxy-server=socks5://127.0.0.1:1080","--proxy-bypass-list=localhost;127.0.0.1;[::1]","--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]","--window-size=1100,760","--user-data-dir="+str(self.store.profile),self.target],env=self.desktop.env,start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+                    self.diagnostic_reader=threading.Thread(target=self.record_stderr,args=(self.browser.stderr,),daemon=True);self.diagnostic_reader.start()
                     time.sleep(.2)
                     if self.browser.poll() is not None:
                         self.close();raise ValueError("browser_start_failed")

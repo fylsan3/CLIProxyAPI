@@ -77,9 +77,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(200,('<html><title>SOCKS-BROWSER-'+owner+'</title><body>SOCKS '+owner+'</body></html>').encode(),'text/html')
         if self.headers.get('Authorization')!='Bearer '+token(current()['revision']):return self.reply(401,{'error':'offline_token_required'})
         record({'owner':owner,'operation':'profile' if self.path.endswith('profile') else 'roles','path':self.path,'header_names':sorted(self.headers.keys())})
-        if self.path=='/api/oauth/usage':
+        if self.path.split('?')[0]=='/api/oauth/usage':
             if fixturePath('usage-denied').exists():return self.reply(403,{'error':'fixture_usage_denied'})
-            return self.reply(200,{'five_hour':{'utilization':17,'resets_at':'2026-11-26T03:00:00Z'},'seven_day':{'utilization':42,'resets_at':'2026-11-30T03:00:00Z'},'limits':[{'kind':'weekly_scoped','percent':5 if fixturePath('quota-reset').exists() else 90,'resets_at':'2026-12-03T03:00:00Z','is_active':True,'scope':{'model':{'display_name':'Fable 5','secret':'must-not-export'}},'private_field':'must-not-export'}]})
+            return self.reply(200,{'cedar_ember':{'eligible':True,'at_limit':False,'grants':[{'id':'fixture-grant','resets_left':2,'resets_total':3,'paused':False,'usable_now':True,'use_requires_limit':False,'ends_at':'2026-12-03T03:00:00Z','private':'must-not-export'}]},'five_hour':{'utilization':17,'resets_at':'2026-11-26T03:00:00Z'},'seven_day':{'utilization':42,'resets_at':'2026-11-30T03:00:00Z'},'limits':[{'kind':'weekly_scoped','percent':5 if fixturePath('quota-reset').exists() else 90,'resets_at':'2026-12-03T03:00:00Z','is_active':True,'scope':{'model':{'display_name':'Fable 5','secret':'must-not-export'}},'private_field':'must-not-export'}]})
         if self.path=='/api/oauth/profile':return self.reply(200,{'account':{'uuid':'offline-account-'+owner,'email':owner+'@example.invalid'},'organization':{'uuid':'offline-org-'+owner,'name':'Offline','subscription_type':'pro','rate_limit_tier':'default_claude_pro'}})
         if self.path=='/api/oauth/claude_cli/roles':return self.reply(200,{'roles':['offline']})
         self.reply(404,{})

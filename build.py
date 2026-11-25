@@ -53,7 +53,7 @@ def build(images=True, runtime_base=None):
  def compile(system,out,args,tags=False,overlay_path=None):
   env['GOOS']=system
   cmd=[str(TOOL/'go/bin/go'),'build','-mod=readonly','-p','2','-overlay',str(overlay_path or ROOT/'overlay.json'),'-o',str(out)]
-  if args==['./cmd/server']:cmd+=['-ldflags','-X main.Version=8.1.1-container-native4']
+  if args==['./cmd/server']:cmd+=['-ldflags','-X main.Version=8.1.1-container-native5']
   if tags:cmd+=['-tags','cpa_offline']
   run(cmd+args,env,SOURCE);print('Built',out.relative_to(ROOT),flush=True)
  compile('linux',ROOT/'image/worker',[str(SOURCE/'cmd/server/offline_worker_entry.go'),str(SOURCE/'cmd/server/offline_refresh_controller.go'),str(SOURCE/'cmd/server/offline_sample_capture.go'),str(SOURCE/'cmd/server/offline_account_info.go')],True)
@@ -85,7 +85,7 @@ def build(images=True, runtime_base=None):
   if not p.is_file() or any(x in p.relative_to(ROOT).parts for x in ['evidence','tests','__pycache__','.git','.build-tools']):continue
   if p.name=='release-manifest.json':continue
   files[str(p.relative_to(ROOT))]=digest(p)
- (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'container-native4','build_runtime_base':runtime_base or base['id'],'published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':False,'container_derived_headers':['X-Stainless-OS','X-Stainless-Arch'],'other_manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
+ (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'container-native5','build_runtime_base':runtime_base or base['id'],'published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':False,'container_derived_headers':['X-Stainless-OS','X-Stainless-Arch'],'other_manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
  parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()

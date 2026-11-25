@@ -46,6 +46,7 @@ r=c.getresponse();r.read();assert r.status==302 and r.getheader('Location')=='/s
 '''
 
 def run():
+ quota_only="--quota-only" in sys.argv
  cache_only="--cache-only" in sys.argv
  extra_only="--extras-only" in sys.argv or cache_only
  report={'real_accounts_used':False,'published':False,'browser_interaction_tested':False,'cases':{}}
@@ -116,7 +117,30 @@ def run():
     ('completions','/v1/completions',{'model':model,'prompt':'hello'}),
     ('responses','/v1/responses',{'model':model,'input':'hello'}),
     ('gemini','/v1beta/models/'+model+':generateContent',{'contents':[{'role':'user','parts':[{'text':'hello'}]}]})]
-   if not extra_only:
+   if quota_only:
+    action('account-update','A')
+    code,creds=management('GET','/credentials');a=next(x for x in creds['files'] if x['name']=='a')
+    values=a['container_observation']['usage']['values']
+    assert values['cedar_ember']['grants'][0]['resets_left']==2
+    assert 'must-not-export' not in json.dumps(a)
+    assert a['container_capabilities']['reset_grant_read'] and not a['container_capabilities']['reset_grant']
+    report['cases']['reset_grants_read_sanitized_no_consume']=True
+    docker('exec',fixture,'touch','/mock/A/quota-reset');action('account-update','A')
+    for stream in (False,True):
+     body={'model':model,'max_tokens':64,'system':[{'type':'text','text':'SYSTEM_KEEP_测试_timezone=UTC'}],'messages':[{'role':'user','content':'MESSAGE_KEEP_测试'}],'stream':stream}
+     code,raw=request('/v1/messages',body);assert code==200,(code,raw[:200])
+    seen_system=0
+    for owner in ('A','B'):
+     rows=[e for e in evidence(owner) if e.get('operation')=='outbound_capture' and e.get('body',{}).get('system')]
+     seen_system+=len(rows)
+     for row in rows:
+      assert 'SYSTEM_KEEP_测试_timezone=UTC' in json.dumps(row['body']['system'],ensure_ascii=False)
+      assert 'You are Claude Code' not in json.dumps(row['body']['system'])
+      assert 'MESSAGE_KEEP_测试' in json.dumps(row['body']['messages'],ensure_ascii=False)
+    assert seen_system==2,seen_system
+    report['cases']['system_text_retained_nonstream_and_stream']=True
+    report['cases']['newapi_reads_central_only']=True
+   if not extra_only and not quota_only:
     for owner in ('A','B'):
      for candidate in ('A','B'):assert management('PATCH','/credentials/status',{'name':candidate.lower(),'disabled':candidate!=owner})[0]==200
      for name,path,body in protocols:
@@ -151,7 +175,9 @@ def run():
     for owner in ('A','B'):
      observed=project(owner)['usage'];assert observed['attempt_counts']['confirmed']==10,(owner,observed)
     report['cases']['multiprotocol_usage_receipts_confirmed']=True
-   if cache_only:
+   if quota_only:
+    pass
+   elif cache_only:
     for name,path,body in protocols:
      for stream in (False,True):
       body=json.loads(json.dumps(body).replace('hello','cache'));current=dict(body,stream=stream);endpoint=path
@@ -219,6 +245,6 @@ def run():
    if fixture:docker('rm','-f',fixture)
    docker('network','rm',network)
  report['test_resources_removed']=True
- (ROOT/'evidence'/('protocol-cache.json' if cache_only else 'protocol-extras.json' if extra_only else 'multiprotocol-chain.json')).write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+ (ROOT/'evidence'/('quota-browser.json' if quota_only else 'protocol-cache.json' if cache_only else 'protocol-extras.json' if extra_only else 'multiprotocol-chain.json')).write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
 if __name__=='__main__':run()
