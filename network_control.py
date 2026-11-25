@@ -47,7 +47,7 @@ class Control(base.Control):
 
     def args(self, card, state_volume=None, runtime=False):
         common = ['--pull=never', '--read-only', '--init', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                  '--memory','1g','--pids-limit','300','--shm-size','96m',
+                  '--memory','2g','--pids-limit','300','--shm-size','96m',
                   '--tmpfs','/tmp:rw,nosuid,nodev,size=512m,mode=1777',
                   '--label','cpa.retention.id='+card['environment_id'],
                   '--mount','type=volume,source='+(state_volume or card['volume'])+',target=/state',
@@ -93,7 +93,7 @@ class Control(base.Control):
         try:
             from creation_probe import discover, PROBE_SCRIPT
             location=discover([*DOCKER,'run','--rm','--name',probe_name,'-i','--network',self.fixture['network'],
-                               '--read-only','--cap-drop','ALL','--cap-add','NET_ADMIN','--user','0:0',
+                               '--read-only','--cap-drop','ALL','--cap-add','NET_ADMIN','--cap-add','SETUID','--cap-add','SETGID','--cap-add','SETPCAP','--user','0:0',
                                '--security-opt','no-new-privileges','--entrypoint','python3',self.image,
                                '-B','-c',PROBE_SCRIPT],config,progress)
         finally:

@@ -7,29 +7,15 @@ from creation_progress import CreationFailure
 
 # Same pinned locale probe, firewall and SOCKS transport. Only progress/error reporting is added.
 PROBE_SCRIPT = r'''
-import json,sys,ssl,subprocess
+import json,sys
 sys.path.insert(0,'/opt/native')
-import locale_probe
-
-def emit(value): print(json.dumps(value),flush=True)
-class ReportingAdapter(locale_probe.Adapter):
-    def connect(self,*args,**kwargs):
-        connection=super().connect(*args,**kwargs)
-        emit({'step':'checking_exit'})
-        return connection
-locale_probe.Adapter=ReportingAdapter
+from locale_probe import probe
 try:
-    result=locale_probe.probe(json.load(sys.stdin))
-    emit({'location':result})
-except Exception as error:
-    known={'proxy_auth_method_rejected','proxy_auth_rejected','proxy_connect_rejected'}
-    code=str(error) if isinstance(error,ValueError) and str(error) in known else 'exit_timezone_unavailable'
-    if isinstance(error,subprocess.CalledProcessError):code='network_guard_setup_failed'
-    elif isinstance(error,ssl.SSLError):code='exit_tls_failed'
-    elif isinstance(error,TimeoutError):code='proxy_check_timeout'
-    elif isinstance(error,(ConnectionError,OSError)):code='proxy_connection_failed'
-    emit({'error':code});sys.exit(1)
+    probe(json.load(sys.stdin))
+except Exception:
+    print(json.dumps({'error':'exit_timezone_unavailable'}),flush=True);sys.exit(1)
 '''
+
 
 def discover(command, config, report, timeout=30):
     with tempfile.TemporaryFile() as errors:

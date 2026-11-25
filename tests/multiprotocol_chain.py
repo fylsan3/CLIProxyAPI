@@ -46,6 +46,7 @@ r=c.getresponse();r.read();assert r.status==302 and r.getheader('Location')=='/s
 '''
 
 def run():
+ egress_only="--egress-only" in sys.argv
  quota_only="--quota-only" in sys.argv
  cache_only="--cache-only" in sys.argv
  extra_only="--extras-only" in sys.argv or cache_only
@@ -86,6 +87,10 @@ def run():
     p=subprocess.run(CLI+['exec','--user','1001:1001','-i',cards[owner]['container'],'/opt/native/worker','call'],input=json.dumps({'path':path,'body':body or {}})+'\n',capture_output=True,text=True,timeout=40,check=True)
     frames=[json.loads(line) for line in p.stdout.splitlines()];raw=b''.join(base64.b64decode(f['body']) for f in frames if 'body' in f)
     assert hashlib.sha256(raw).hexdigest()==frames[-1]['response_sha256'];return frames[0]['status'],json.loads(raw)
+   def browser(owner,body):
+    result=subprocess.run(CLI+['exec','--user','1001:1001','-i',cards[owner]['container'],'python3','-B','/opt/sample/worker.py','request'],input=json.dumps(body),text=True,capture_output=True,timeout=25)
+    assert result.returncode==0,result.stderr[-1000:]
+    data=json.loads(result.stdout);assert not data.get('error'),data;return data
    for owner in ('A','B'):
     action('register',owner,label='HTTPS 测试 '+owner,provider='claude-subscription')
     action('create',owner,proxy_url='socks5h://test-'+owner+':fixture-password-'+owner+'@'+ip+':'+str(specs[owner]['proxy_port']))
@@ -93,9 +98,14 @@ def run():
     wait(lambda:worker(owner,'/health')[0]==200)
     code,pending=worker(owner,'/auth/begin');assert code==200
     assert urlsplit(pending['authorization_url']).netloc=='claude.ai'
+    if egress_only:
+     browser(owner,{'op':'open-browser','url':pending['authorization_url']})
+     wait(lambda:any(e.get('operation')=='browser_environment' for e in evidence(owner)))
     p=subprocess.run(CLI+['exec','--user','1001:1001','-i',cards[owner]['container'],'python3','-B','-c',AUTHORIZE],input=json.dumps({'url':pending['authorization_url']}),text=True,capture_output=True,timeout=30)
     assert p.returncode==0,p.stderr[-1000:]
     wait(lambda:worker(owner,'/health')[1].get('authorized'))
+    if egress_only:
+     browser(owner,{'op':'close-browser'});assert not browser(owner,{'op':'status'})['browser']
     action('retry-backup',owner);wait(lambda:project(owner).get('overall_ready'))
     assert worker(owner,'/health')[1]['revision']==1
     print('Authorized fictional '+owner,flush=True)
@@ -174,7 +184,7 @@ print(json.dumps(out))
     report['cases']['complete_encrypted_control_and_model_http_replay']=True
     report['archive_replay']=archive_reports
 
-   if not extra_only and not quota_only:
+   if not extra_only and not quota_only and not egress_only:
     for owner in ('A','B'):
      for candidate in ('A','B'):assert management('PATCH','/credentials/status',{'name':candidate.lower(),'disabled':candidate!=owner})[0]==200
      for name,path,body in protocols:
@@ -209,7 +219,10 @@ print(json.dumps(out))
     for owner in ('A','B'):
      observed=project(owner)['usage'];assert observed['attempt_counts']['confirmed']==10,(owner,observed)
     report['cases']['multiprotocol_usage_receipts_confirmed']=True
-   if quota_only:
+   if egress_only:
+    from egress_chain_cases import exercise
+    exercise(report,cards,specs,fixture,worker,browser,action,management,request,project,evidence,model,wait)
+   elif quota_only:
     pass
    elif cache_only:
     for name,path,body in protocols:
@@ -247,7 +260,7 @@ print(json.dumps(out))
    import os
    newapi=ROOT.parent/'newapi-container-integration'
    tool=ROOT.parent/'cpa-security-audit/lab/replay80/go'
-   if newapi.exists() and not extra_only:
+   if newapi.exists() and not extra_only and not egress_only:
     env=dict(os.environ,GOROOT=str(tool),GOMODCACHE=str(ROOT.parent/'newapi-build-cache/modules'),GOCACHE='/tmp/newapi-go-build',GOTOOLCHAIN='local',CPA_AB_TEST_ENDPOINT='http://127.0.0.1:'+str(ui.port),CPA_AB_TEST_KEY=key)
     check=subprocess.run([str(tool/'bin/go'),'test','-p','3','./service','-run','^TestContainerCPAIntegration$','-count=1'],cwd=newapi,env=env,capture_output=True,text=True,timeout=120)
     assert check.returncode==0,check.stdout[-3000:]+check.stderr[-1500:]
@@ -279,6 +292,6 @@ print(json.dumps(out))
    if fixture:docker('rm','-f',fixture)
    docker('network','rm',network)
  report['test_resources_removed']=True
- (ROOT/'evidence'/('quota-browser.json' if quota_only else 'protocol-cache.json' if cache_only else 'protocol-extras.json' if extra_only else 'multiprotocol-chain.json')).write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+ (ROOT/'evidence'/('account-egress-chain.json' if egress_only else 'quota-browser.json' if quota_only else 'protocol-cache.json' if cache_only else 'protocol-extras.json' if extra_only else 'multiprotocol-chain.json')).write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 
 if __name__=='__main__':run()

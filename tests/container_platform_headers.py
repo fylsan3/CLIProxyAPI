@@ -16,6 +16,7 @@ tool=Path(os.environ.get('CPA_BUILD_TOOLS',str(R/'.build-tools'))).resolve()
 with tempfile.TemporaryDirectory(prefix='cpa-platform-') as folder:
  p=Path(folder);(p/'go.mod').write_text('module platformcheck\n\ngo 1.26\n')
  (p/'headers.go').write_text('package main\nimport("net/http";"strings";"syscall";"encoding/json";"encoding/hex";"crypto/sha256";"os";"errors")\n'+functions+'\n'+baseline)
+ (p/'policy.go').write_text((R/'src/cmd/server/offline_header_policy.go').read_text().replace('//go:build cpa_offline',''))
  (p/'headers_test.go').write_text((R/'tests/container_platform_headers_test.go').read_text())
  env=dict(os.environ,GOROOT=str(tool/'go'),GOOS='linux',GOARCH='arm64',CGO_ENABLED='0',GOENV='off',GOTOOLCHAIN='local',GOPROXY='off',GOSUMDB='off',GOFLAGS='',GOWORK='off',GOCACHE='/tmp/cpa-platform-go-cache')
  subprocess.run([str(tool/'go/bin/go'),'test','-c','-o',str(p/'check')],cwd=p,env=env,check=True)

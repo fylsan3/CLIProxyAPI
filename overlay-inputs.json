@@ -32,5 +32,9 @@
   "internal/api/handlers/management/container_credentials.go": "src/internal/api/handlers/management/container_credentials.go",
   "internal/runtime/executor/helps/usage_helpers.go": "src/internal/runtime/executor/helps/usage_helpers.go",
   "internal/runtime/executor/helps/container_usage.go": "src/internal/runtime/executor/helps/container_usage.go",
-  "cmd/server/offline_http_archive.go": "src/cmd/server/offline_http_archive.go"
+  "cmd/server/offline_http_archive.go": "src/cmd/server/offline_http_archive.go",
+  "cmd/server/offline_header_policy.go": "src/cmd/server/offline_header_policy.go",
+  "cmd/server/offline_network.go": "src/cmd/server/offline_network.go",
+  "internal/auth/claude/anthropic_auth.go": "src/internal/auth/claude/anthropic_auth.go",
+  "internal/auth/claude/anthropic_auth_test.go": "src/internal/auth/claude/anthropic_auth_test.go"
 }

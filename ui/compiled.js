@@ -409,6 +409,7 @@ function renderCard(p,data){
  if(p.network?.timezone_warning)text(main,'p',p.network.timezone_check_reason==='timezone_changed'?'出口时区与固定时区不同；继续使用 '+p.network.fixed_timezone+'。':'本次未能核对出口时区；继续使用已保存的时区。','card-notice status-bad');
  if(p.state?.authorization_issue)text(main,'p',authorizationLabels[p.state.authorization_issue]||'授权未完成，请查看详情。','error');
  if(p.state?.storage_warning)text(main,'p','凭据保存或备份异常，请检查存储；有效调用继续按 CPA 原逻辑处理。','error');
+ if(p.state?.resources?.last_oom_at)text(main,'p','最近内存不足记录：'+new Date(p.state.resources.last_oom_at*1000).toLocaleString()+'，系统终止了容器内进程。请检查浏览器与内存用量。','status-bad');
  renderCreation(main,p);
  renderAccountQuota(main,p);renderResetGrants(main,p);
  const actions=text(main,'div','','actions');
@@ -437,6 +438,8 @@ function renderCard(p,data){
  function showDetails(open){details.hidden=false;if(open)expandedAccounts.add(p.slug);else expandedAccounts.delete(p.slug);toggle.textContent=open?'关闭详情':'详情';toggle.setAttribute('aria-label',(p.label||p.slug)+' · '+toggle.textContent);toggle.setAttribute('aria-expanded',String(open));cardMotion.expand(card,details,content,open);}
  toggle.onclick=()=>showDetails(!expandedAccounts.has(p.slug));card.onkeydown=e=>{if(e.key==='Escape'&&expandedAccounts.has(p.slug)){e.preventDefault();showDetails(false);toggle.focus({preventScroll:true});}};
  let section=detail(content,'环境与网络');
+ if(p.state?.egress_policy)text(section,'p','出站管理：Go · 请求头规则 '+p.state.egress_policy);
+ const resources=p.state?.resources;if(resources?.memory_limit_bytes)text(section,'p','容器内存：'+Math.round((resources.memory_current_bytes||0)/1048576)+' MiB / '+Math.round(resources.memory_limit_bytes/1048576)+' MiB；峰值 '+Math.round((resources.memory_peak_bytes||0)/1048576)+' MiB');
  text(section,'p','容器编号：'+(p.container?p.container.slice(0,12):'未创建'));text(section,'p','中央调度：'+(centralLabels[central.reason]||'未知'),central.reason==='eligible'?'status-ok':'status-bad');
  if(p.container){
   if(revealedProxies[p.slug]){const label=text(section,'label','已绑定的 SOCKS 地址','proxy-entry'),input=document.createElement('input');input.type='text';input.readOnly=true;input.value=revealedProxies[p.slug];input.autocomplete='off';input.spellcheck=false;label.append(input);const hide=text(section,'button','收起 SOCKS 地址','secondary');hide.onclick=()=>{delete revealedProxies[p.slug];refresh(true);};}

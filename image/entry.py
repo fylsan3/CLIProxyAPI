@@ -43,12 +43,9 @@ def run():
 
 
 if __name__=='__main__':
-    adapter=None
     try:
-        adapter=subprocess.Popen(['python3','-B','/opt/native/socks_adapter.py'])
         from network_gate import check
         while True:
-            if adapter.poll() is not None:raise ValueError('proxy_monitor_stopped')
             try:check();break
             except (OSError,ValueError,KeyError):time.sleep(.1)
         Path('/run/network/lifecycle.json').write_text('{"network_passed":true,"account_state_opened":true}')
@@ -62,6 +59,3 @@ if __name__=='__main__':
     except (RetentionError,OSError,ValueError,KeyError):
         print('environment_or_network_protection_failed',flush=True)
         sys.exit(1)
-    finally:
-        if adapter is not None:
-            adapter.terminate();adapter.wait(5)

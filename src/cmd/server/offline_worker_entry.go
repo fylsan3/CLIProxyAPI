@@ -89,16 +89,11 @@ type providerTransport struct {
 }
 
 func (t *providerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	allowed := (req.URL.Host == "platform.claude.com" && req.URL.Path == "/v1/oauth/token") ||
-		(req.URL.Host == "api.anthropic.com" && (req.URL.Path == "/api/oauth/usage" || req.URL.Path == "/api/oauth/profile" || req.URL.Path == "/api/oauth/claude_cli/roles" || req.URL.Path == "/v1/messages" || req.URL.Path == "/v1/messages/count_tokens"))
-	if !allowed || req.URL.Scheme != "https" || req.URL.User != nil {
-		return nil, errors.New("offline_destination_denied")
+	if _, allowed := accountOperationFor(req); !allowed {
+		return nil, errors.New("account_destination_denied")
 	}
 	if t.provider == "claude-subscription" {
 		copy := req.Clone(req.Context())
-		if copy.URL.Path == "/api/oauth/usage" {
-			copy.Header.Set("User-Agent", "CLIProxyAPI/8.1.1 cpa-container-worker/control-recovery1")
-		}
 		applyProviderHeaders(copy)
 		return t.send(copy, req)
 	}
@@ -201,47 +196,6 @@ func normalizeContainerPlatform(system, machine string) (string, string) {
 	return osName, arch
 }
 
-// Keep manually selected protocol declarations; only OS and architecture are
-// read from this container. OAuth control headers remain separate.
-func applyProviderHeaders(r *http.Request) {
-	if r.URL.Path != "/v1/messages" && r.URL.Path != "/v1/messages/count_tokens" {
-		if r.URL.Path == "/v1/oauth/token" || r.URL.Path == "/api/oauth/profile" || r.URL.Path == "/api/oauth/claude_cli/roles" {
-			for name := range r.Header {
-				if strings.EqualFold(name, "User-Agent") {
-					delete(r.Header, name)
-				}
-			}
-			r.Header.Set("User-Agent", "CLIProxyAPI/8.1.1 cpa-container-worker/control-recovery1")
-		}
-		return
-	}
-	platformOS, platformArch := containerPlatformHeaders()
-	values := map[string]string{
-		"user-agent":                                "claude-cli/2.1.331 (external, sdk-cli)",
-		"x-stainless-os":                            platformOS,
-		"x-stainless-arch":                          platformArch,
-		"x-stainless-runtime":                       "node",
-		"x-stainless-runtime-version":               "v26.12.1",
-		"x-stainless-lang":                          "js",
-		"x-stainless-package-version":               "0.128.0",
-		"x-app":                                     "cli",
-		"anthropic-dangerous-direct-browser-access": "true",
-		"anthropic-version":                         "2023-06-01",
-		"accept":                                    "application/json",
-		"accept-encoding":                           "gzip, deflate, br, zstd",
-	}
-	for name := range r.Header {
-		lower := strings.ToLower(name)
-		_, replace := values[lower]
-		if replace {
-			delete(r.Header, name)
-		}
-	}
-	for name, value := range values {
-		r.Header.Set(name, value)
-	}
-}
-
 type providerHeadersKey struct{}
 type providerHeaderCapture struct {
 	mu      sync.Mutex
@@ -302,10 +256,20 @@ func networkCheck() error {
 		return err
 	}
 	var proof struct {
-		Config string `json:"config_sha256"`
+		Config  string `json:"config_sha256"`
+		Manager string `json:"egress_manager"`
+		UID     int    `json:"egress_uid"`
 	}
-	if json.Unmarshal(proofRaw, &proof) != nil || proof.Config != os.Getenv("PROXY_CONFIG_SHA256") {
+	if json.Unmarshal(proofRaw, &proof) != nil || proof.Config != os.Getenv("PROXY_CONFIG_SHA256") || proof.Manager != "go" || proof.UID != accountNetworkUID {
 		return errors.New("network_binding_mismatch")
+	}
+	liveInfo, err := os.Lstat("/run/network/live/status.json")
+	if err != nil {
+		return errors.New("account_proxy_unavailable")
+	}
+	liveStat, ok := liveInfo.Sys().(*syscall.Stat_t)
+	if !ok || liveStat.Uid != accountNetworkUID || !liveInfo.Mode().IsRegular() || liveInfo.Mode().Perm()&0022 != 0 {
+		return errors.New("network_status_untrusted")
 	}
 	raw, err := os.ReadFile("/run/network/live/status.json")
 	if err != nil {
@@ -432,6 +396,8 @@ func localError(out http.ResponseWriter, status int, code string) {
 }
 func (w *worker) status() map[string]any {
 	data := map[string]any{"authorization_issue": w.authorizationIssue, "owner": w.owner, "container": os.Getenv("HOSTNAME"), "authorized": false, "revision": 0, "active_calls": w.activeCalls.Load(), "authorization_pending": w.pending != nil && time.Now().Before(w.pending.Expires), "offline_only": os.Getenv("CPA_PROVIDER") != "claude-subscription", "refreshing": w.renewing.Load(), "storage_failed": w.storageFailed, "storage_warning": w.store.failed.Load()}
+	data["egress_policy"] = accountHeaderPolicyVersion
+	data["resources"] = accountResourceSnapshot()
 	auth, ok := w.manager.GetByID(w.authID())
 	if !ok {
 		data["dispatch_issue"] = "authorization_required"
@@ -1156,8 +1122,12 @@ func main() {
 		err = call()
 	} else if len(os.Args) == 2 && os.Args[1] == "serve" {
 		err = serve()
+	} else if len(os.Args) == 2 && os.Args[1] == "network-serve" {
+		err = runAccountNetwork(false)
+	} else if len(os.Args) == 2 && os.Args[1] == "network-probe" {
+		err = runAccountNetwork(true)
 	} else {
-		err = errors.New("expected serve or call")
+		err = errors.New("expected serve, call, network-serve or network-probe")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "offline_worker_failed")

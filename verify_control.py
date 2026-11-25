@@ -128,7 +128,7 @@ def run():
     for path in ('/v1/oauth/token','/api/oauth/profile','/api/oauth/claude_cli/roles'):
      found=[e for e in events if e['path']==path];assert found,path
      for e in found:
-      assert e['software_headers']['User-Agent']==['CLIProxyAPI/8.1.1 cpa-container-worker/control-recovery1']
+      assert e['software_headers']['User-Agent']==['axios/1.15.2']
       assert all(not value for name,value in e['software_headers'].items() if name!='User-Agent')
     report['observed_control_headers'][owner]=[{'path':e['path'],'headers':e['software_headers']} for e in events if e['path'] in ('/v1/oauth/token','/api/oauth/profile','/api/oauth/claude_cli/roles')]
    for owner in ('A','B'):model(owner)

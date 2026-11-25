@@ -15,6 +15,7 @@ import base64, atexit
 from chrome_shutdown import close_windows
 sys.path.insert(0,"/opt/native")
 from profile_store import ProfileStore, ProfileError, atomic_json, regular
+from browser_resources import MemoryObserver, memory_snapshot
 
 owner=os.environ["FIXTURE_OWNER"]
 assert valid_owner(owner)
@@ -43,10 +44,12 @@ class Worker:
     def __init__(self):
         self.desktop=Desktop();self.lock=threading.Lock();self.browser=None;self.seen=threading.Event();self.consent=threading.Event();self.ack=threading.Event();self.path=""
         self.last_close=None;self.target=None;self.sandbox=None;self.diagnostics=[];self.diagnostic_reader=None
+        self.memory_observer=MemoryObserver(lambda event:save('browser-memory-diagnostics.json',event))
         self.store=None;self.failure=None
         try:self.store=ProfileStore(state,owner)
         except (ProfileError,OSError,ValueError) as error:
             self.failure=str(error) if isinstance(error,ProfileError) else 'profile_storage_unsafe'
+        if self.store:self.memory_observer.start();atexit.register(self.memory_observer.close)
         self.project=state/"note.txt"
         if self.store and not self.project.exists():self.project.write_text("sample project "+owner+"\n"+secrets.token_hex(12)+"\n")
     def record_stderr(self, stream):
@@ -63,7 +66,7 @@ class Worker:
         stream.close()
     def data(self):
         result={"owner":owner,"host":socket.gethostname(),"granted":False,"browser":bool(chrome_pids()),"receipt":None,
-                "diagnostics":list(self.diagnostics),
+                "diagnostics":list(self.diagnostics),"memory":memory_snapshot(),
                 "sandbox":self.sandbox if self.browser and self.browser.poll() is None else None,
                 "profile":self.store.status if self.store else "blocked",
                 "startup_error":self.failure,"profile_persistent":bool(self.store),

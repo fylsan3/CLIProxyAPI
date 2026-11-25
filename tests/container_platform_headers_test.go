@@ -8,6 +8,8 @@ import (
 "encoding/hex"
 	"net/http"
 	"net/http/httptest"
+"net/url"
+"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -61,7 +63,7 @@ func TestActualContainerAndWire(t *testing.T) {
 				w.Write([]byte("OK"))
 			}))
 			defer server.Close()
-			req, _ := http.NewRequest("POST", server.URL+path, strings.NewReader(body))
+			req, _ := http.NewRequest("POST", "https://api.anthropic.com"+path, strings.NewReader(body))
 			req.Header = http.Header{"x-stainless-os": {"Windows"}, "X-Stainless-OS": {"MacOS"}, "x-stainless-arch": {"x64"}, "X-Stainless-Arch": {"x32"}, "X-Timezone": {"Asia/Tokyo"}, "Accept-Language": {"zh-CN"}, "Anthropic-Version": {"caller-version"}}
 			baseline := req.Clone(req.Context())
 			applyManualBaseline(baseline)
@@ -74,7 +76,8 @@ func TestActualContainerAndWire(t *testing.T) {
 					t.Fatalf("manual field changed: %s", key)
 				}
 			}
-			res, err := server.Client().Do(req)
+			req.URL, _ = url.Parse(server.URL+path)
+            res, err := server.Client().Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,16 +98,25 @@ func TestActualContainerAndWire(t *testing.T) {
 	}
 }
 
-func TestOAuthHeadersRemainSeparate(t *testing.T) {
-	for _, path := range []string{"/v1/oauth/token", "/api/oauth/profile", "/api/oauth/claude_cli/roles"} {
-		req, _ := http.NewRequest("POST", "https://api.anthropic.com"+path, nil)
-		req.Header.Set("X-Stainless-OS", "caller-os")
-		req.Header.Set("X-Stainless-Arch", "caller-arch")
-		applyProviderHeaders(req)
-		if req.Header.Get("X-Stainless-OS") != "caller-os" || req.Header.Get("X-Stainless-Arch") != "caller-arch" || req.Header.Get("User-Agent") != "CLIProxyAPI/8.1.1 cpa-container-worker/control-recovery1" {
-			t.Fatal("OAuth handling changed")
-		}
-	}
+func TestOAuthNativeHeadersUntouched(t *testing.T) {
+ for _,op:=range accountOperations {
+  if op.Kind!="oauth" {continue}
+  req,_:=http.NewRequest(op.Method,"https://"+op.Host+op.Path,nil)
+  req.Header.Set("User-Agent","axios/1.15.2")
+  req.Header.Set("Authorization","Bearer fixture")
+  req.Header.Set("Accept","application/json, text/plain, */*")
+  req.Header.Set("Cache-Control","no-cache")
+  req.Close=true;before:=req.Header.Clone()
+  applyProviderHeaders(req)
+  if op.Path=="/api/oauth/usage" {
+   before.Set("User-Agent","claude-cli/2.1.331 (external, sdk-cli)")
+   before.Set("Content-Type","application/json")
+   before.Set("Connection","keep-alive")
+   before.Set("Anthropic-Beta","oauth-2025-04-20")
+   before.Del("Cache-Control")
+   if !reflect.DeepEqual(before,req.Header)||req.Close {t.Fatal("usage headers changed unexpectedly")}
+  } else if !reflect.DeepEqual(before,req.Header)||!req.Close {t.Fatal("native OAuth headers changed")}
+ }
 }
 
 func TestBaselineRestorationAndMismatch(t *testing.T) {
