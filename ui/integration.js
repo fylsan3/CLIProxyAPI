@@ -3,7 +3,7 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui4';
+  host.dataset.uiRevision = 'accounts-ui5';
   const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
   syncStatusTheme();
   new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
@@ -32,7 +32,9 @@
     const container = nativeDocument.querySelector('.main-content');
     if (container && host.parentElement !== container) container.append(host);
     nativeDocument.title = isAccountPage() ? '账号与运行状态 · CPA' : 'CPA';
+    glassNavigation.schedule();
   }
+  __NAVIGATION__
   const observer = new MutationObserver(mountNavigation);
   observer.observe(nativeDocument.getElementById('root'), {childList:true, subtree:true});
   nativeDocument.addEventListener('click', event => {

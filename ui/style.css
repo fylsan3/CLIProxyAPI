@@ -15,3 +15,21 @@ dialog{color:var(--text-primary,#2d2a26);background:var(--bg-primary,#fff);borde
 .status-ok,.detail-content .status-ok,.card-facts .status-ok,.card-notice.status-ok,#requests .status-ok,.creation-steps .step-completed{color:var(--cpa-status-ok)}
 .status-bad,.detail-content .status-bad,.card-facts .status-bad,.card-notice.status-bad,#requests .status-bad,.creation-steps .step-failed,.creation-error,.error{color:var(--cpa-status-bad)}
 .badge.status-ok,.badge.status-bad{background:var(--bg-tertiary,#f6f6f6)}
+
+/* Glass surfaces and bounded pointer motion. Status text remains the accessible signal. */
+.account-card{position:relative;isolation:isolate;align-self:start;border-radius:16px;background:color-mix(in srgb,var(--bg-secondary,#fff) 82%,transparent);backdrop-filter:blur(18px) saturate(125%);-webkit-backdrop-filter:blur(18px) saturate(125%);box-shadow:inset 0 1px 0 #ffffff60,0 6px 24px #00000005;transform:perspective(1100px) rotateX(var(--tilt-x,0deg)) rotateY(var(--tilt-y,0deg));transition:transform .42s cubic-bezier(.2,.8,.2,1),box-shadow .25s;--light-x:50%;--light-y:50%}
+.account-card.pointer-lit{transition:transform .14s ease-out;box-shadow:inset 0 1px 0 #ffffff70,0 14px 32px #0000000c}
+.account-card::before,.account-card::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .35s;border-radius:inherit}
+.account-card::before{z-index:-1;background:radial-gradient(420px circle at var(--light-x) var(--light-y),color-mix(in srgb,var(--text-primary,#333) 7%,transparent),transparent 70%)}
+.account-card::after{z-index:3;padding:1px;background:radial-gradient(240px circle at var(--light-x) var(--light-y),#ffffffdd,color-mix(in srgb,var(--text-primary,#333) 30%,transparent) 38%,transparent 75%);mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);mask-composite:exclude;-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor}
+.account-card.pointer-lit::before,.account-card.pointer-lit::after{opacity:1}
+.account-detail{position:relative;overflow:hidden;padding:0 24px;border-top-color:color-mix(in srgb,var(--border-color,#ddd) 65%,transparent)}
+.detail-toggle{display:flex;margin:9px 0 9px auto;min-width:84px;min-height:36px;border-radius:999px;background:color-mix(in srgb,var(--bg-primary,#fff) 65%,transparent);box-shadow:inset 0 1px 0 #ffffff70}
+.detail-toggle:after{content:"↗";font-size:15px;font-weight:400}.detail-toggle[aria-expanded="true"]:after{content:"↙"}
+.detail-content{padding-top:16px}.is-expanded{box-shadow:inset 0 1px 0 #ffffff60,0 12px 38px #00000009}.detail-moving{transform:none!important}
+.border-beam{display:none;overflow:hidden;position:absolute;inset:0;z-index:4;border-radius:inherit;pointer-events:none;padding:2px;background:#d92d201c;mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);mask-composite:exclude;-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor}
+.has-issue>.border-beam{display:block}.border-beam:before{content:"";position:absolute;width:110px;height:110px;background:radial-gradient(circle,#ff6655 0%,#d92d20c0 20%,transparent 68%);offset-path:inset(1px round 15px);offset-distance:0%;offset-rotate:0deg;animation:account-border-beam 5s linear infinite;animation-play-state:paused}
+.motion-visible.has-issue>.border-beam:before{animation-play-state:running}.motion-paused .border-beam:before{animation-play-state:paused!important}
+@keyframes account-border-beam{to{offset-distance:100%}}
+@media(max-width:520px){.account-detail{padding:0 18px}.detail-toggle{min-height:44px}}
+@media(prefers-reduced-motion:reduce){.account-card{transform:none!important}.account-card::before,.account-card::after{display:none}.border-beam:before{animation:none!important;display:none}.has-issue>.border-beam{background:#d92d2070}}
