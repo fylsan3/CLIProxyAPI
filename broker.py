@@ -13,6 +13,7 @@ from account_registry import Registry,PROVIDERS
 from account_identity import owner_for,valid_slug
 from protection import Protection
 from creation_progress import CreationFailure
+from maintenance import MaintenanceGate
 from browser_control import Browsers
 from central_view import central_request,merge_central
 
@@ -28,9 +29,12 @@ class Broker:
         self.lease=Lease(folder/'control.lock');self.stopping=threading.Event()
         self.image=json.loads((ROOT/'image.json').read_text())['id']
         self.registry=Registry(folder)
+        from account_metadata import Metadata
+        self.metadata=Metadata(folder)
         self.protection=Protection(folder/'environments')
         self.offline_only=self.protection.control.fixture.get('mode','closed_test')!='managed'
         self.browsers=Browsers(self,CLI)
+        self.gate=MaintenanceGate()
         self.db=folder/'control.sqlite';private_file(self.db);self.lock=threading.RLock()
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS meta(scope TEXT)')
@@ -64,6 +68,9 @@ class Broker:
             result['logging_to_file']=settings.get('logging-to-file') if code==200 else None
         except (OSError,ValueError):result['logging_to_file']=None
         return merge_central(result,central)
+    def observe_backup_revision(self,owner,revision):
+        if not hasattr(self,'packages') or type(revision) is not int or revision<1:return
+        self.packages.observe_revision(owner,revision)
     def connect(self):return sqlite3.connect(self.db,timeout=3)
     def name(self,owner):return 'native-'+self.scope+'-'+owner.lower()
     def inspect(self,owner):
@@ -99,7 +106,7 @@ class Broker:
         frames=[json.loads(line) for line in raw.splitlines()]
         payload=b''.join(base64.b64decode(frame['body'],validate=True) for frame in frames if 'body' in frame)
         last=frames[-1]
-        if not last.get('done') or last['owner']!=owner or last['container']!=info['Id'][:12] or hashlib.sha256(payload).hexdigest()!=last['response_sha256']:
+        if not last.get('done') or last['owner']!=owner or last['container']!=info['Config']['Hostname'] or hashlib.sha256(payload).hexdigest()!=last['response_sha256']:
             raise PolicyError('receipt_mismatch')
         return frames[0]['status'],json.loads(payload)
     def _worker_status(self,owner):
@@ -112,14 +119,20 @@ class Broker:
                 return dict(result,reason='container_stopped',exit_code=info['State'].get('ExitCode'))
             code,state=self.invoke(owner,'/health',{})
             if code!=200:return dict(result,reason='worker_unavailable')
+            if state.get('authorized'):self.observe_backup_revision(owner,state.get('revision',0))
+            identity=self.metadata.bind(owner.lower(),state.get('account_identity'))
+            if identity:result['identity']=identity;result['label']=identity.get('email') or '已授权账号'
             issue=state.get('dispatch_issue')
             reason=('authorization_pending' if issue=='authorization_required' and state.get('authorization_pending') else issue or ('offline_ready' if self.offline_only else 'account_ready'))
             return dict(result,state=state,reason=reason,ready=not issue,dispatch_mode='direct' if not issue else 'blocked')
-        except PolicyError as error:
+        except (PolicyError,ValueError) as error:
             return dict(result,reason='worker_unavailable' if str(error) in ('worker_unavailable','worker_call_interrupted') else 'binding_check_failed')
         except (OSError,ValueError,KeyError,subprocess.SubprocessError):
             return dict(result,reason='worker_unavailable')
     def status(self,owner):
+        gate=self.gate.status(owner)
+        if gate['maintenance']:
+            return dict(slug=owner.lower(),ready=False,reason='account_maintenance',dispatch_mode='blocked',offline_only=self.offline_only,protection=self.protection.state(owner),**gate)
         try:
             info=self.inspect(owner)
             if info and info['State']['Running']:
@@ -172,6 +185,25 @@ class Broker:
                 self.protection.phase(owner,'backup_failed',backup_verified=False)
                 return 503,{'error':{'message':'environment_backup_required'}}
     def admin(self,action,body,connection=None):
+        protected={'refresh-check','refresh-execute','auth-begin','auth-cancel','open-browser','close-browser','retry-backup','backup-restore','account-update'}
+        if action in protected:
+            owner=self.registry.get(body.get('slug',''))['owner']
+            try:
+                with self.gate.request(owner):return self.admin_execute(action,body,connection)
+            except ValueError as error:
+                if str(error)=='account_maintenance':return 409,{'error':'account_maintenance'}
+                raise
+        return self.admin_execute(action,body,connection)
+
+    def admin_execute(self,action,body,connection=None):
+        if action=='register-auto':
+            if set(body)!={'provider'} or body['provider'] not in self.available_providers():raise PolicyError('invalid_request')
+            slug='account-'+uuid.uuid4().hex[:12]
+            return 200,self.registry.register(slug,'待授权账号',body['provider'])
+        if action=='route-update':
+            slug=body.get('slug','');self.registry.get(slug)
+            try:return 200,self.metadata.patch_route(slug,body.get('changes',{}),body.get('revision'))
+            except ValueError as error:return 409,{'error':str(error)}
         if action=='register':
             if set(body)!={'slug','label','provider'}:raise PolicyError('invalid_request')
             if body['provider'] not in self.available_providers():raise ValueError('provider_not_available')
@@ -197,7 +229,12 @@ class Broker:
             from dashboard import action as ui_action
             return ui_action(self,body)
         if action in ('logging-status','logging-update'):return self.central(action,body)
-        if action=='list':return 200,{'projects':[dict(self.status(row['owner']),label=row['label'],provider=row['provider'],models=PROVIDERS[row['provider']]['models']) for row in self.registry.list()],'release':release_info(),'providers':self.available_providers(),'runtime_mode':self.protection.control.fixture.get('mode','closed_test')}
+        if action=='list':return 200,{'projects':[dict(self.status(row['owner']),label=row['label'],provider=row['provider'],models=PROVIDERS[row['provider']]['models'],routing=self.metadata.route(row['slug'])) for row in self.registry.list()],'release':release_info(),'providers':self.available_providers(),'runtime_mode':self.protection.control.fixture.get('mode','closed_test')}
+        if action=='summary':
+            with self.connect() as db:
+                totals=db.execute("SELECT COUNT(*),SUM(CASE WHEN state='completed' AND status>=200 AND status<300 THEN 1 ELSE 0 END),SUM(CASE WHEN state IN ('not_dispatched','result_unknown') OR status>=400 THEN 1 ELSE 0 END),SUM(CASE WHEN state IN ('preparing','running') THEN 1 ELSE 0 END),COUNT(DISTINCT run) FROM attempts").fetchone()
+                recent={r[0]:r[1] for r in db.execute("SELECT owner,MAX(started) FROM attempts WHERE state='completed' AND status>=200 AND status<300 GROUP BY owner")}
+            return 200,{'attempts':totals[0],'successful_attempts':totals[1] or 0,'failed_attempts':totals[2] or 0,'active_attempts':totals[3] or 0,'requests':totals[4],'last_success':recent}
         if action=='reconcile':
             with self.connect() as db:
                 db.row_factory=sqlite3.Row
@@ -211,7 +248,21 @@ class Broker:
         if action=='proxy-view':return 200,{'proxy_url':self.protection.control.proxy_url(owner)}
         if action=='create':return 200,self.create(owner,body.get('proxy_url'))
         if action=='restart':
-            self.protection.restart(owner);return 200,self.status(owner)
+            try:
+                with self.gate.maintenance(owner):
+                    info=self.inspect(owner)
+                    if info and info['State']['Running']:
+                        code,state=self.invoke(owner,'/health',{})
+                        if code!=200:raise ValueError('worker_unavailable')
+                        if state.get('active_calls',0) or state.get('refreshing'):raise ValueError('account_busy')
+                        if state.get('authorization_pending'):raise ValueError('authorization_pending')
+                        self.browsers.close(owner)
+                    self.protection.restart(owner)
+            except ValueError as error:
+                if str(error) in ('account_busy','account_maintenance','authorization_pending','worker_unavailable'):
+                    return 409,{'error':str(error)}
+                raise
+            return 200,self.status(owner)
         if action=='retry-backup':return self.retry_backup(owner)
         if action=='open-browser':return 200,self.browsers.open(owner)
         if action=='close-browser':self.browsers.close(owner);return 200,{'browser':False}
@@ -221,6 +272,10 @@ class Broker:
             if state.get('authorized'):raise PolicyError('already_authorized')
             self.protection.phase(owner,'authorizing',backup_verified=False)
             return self.browsers.begin(owner)
+        if action=='account-statistics':
+            with self.connect() as db:
+                r=db.execute("SELECT COUNT(DISTINCT run),COUNT(*),SUM(CASE WHEN state='completed' AND status>=200 AND status<300 THEN 1 ELSE 0 END),SUM(CASE WHEN state IN ('not_dispatched','result_unknown') OR status>=400 THEN 1 ELSE 0 END) FROM attempts WHERE owner=?",(owner,)).fetchone()
+            return 200,dict(zip(('requests','attempts','successful_attempts','failed_attempts'),[v or 0 for v in r]))
         if action=='usage':
             with self.connect() as db:
                 db.row_factory=sqlite3.Row
@@ -232,7 +287,12 @@ class Broker:
                 rows=[dict(row) for row in db.execute('SELECT * FROM attempts WHERE owner=? ORDER BY started DESC,rowid DESC LIMIT 30',(owner,))]
             return 200,{'attempts':rows}
         if action=='auth-refresh':return self.central('refresh',{'slug':owner.lower()})
-        if action=='refresh-check':return self.invoke(owner,'/auth/refresh-check',{},connection)
+        if action=='account-update':return self.invoke(owner,'/auth/account-update',{},connection)
+        if action=='refresh-check':
+            code,result=self.invoke(owner,'/auth/refresh-check',{},connection)
+            state=result.get('state',{})
+            if code==200 and state.get('authorized'):self.observe_backup_revision(owner,state.get('revision',0))
+            return code,result
         if action=='refresh-execute':
             code,_=self.invoke(owner,'/auth/refresh',{},connection)
             state_code,state=self.invoke(owner,'/health',{})
@@ -264,6 +324,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (PolicyError,OSError,ValueError,KeyError,subprocess.SubprocessError):self.answer(503,{'error':{'message':'native_worker_unavailable'}})
     def messages(self,raw,body):
         broker=self.server.broker
+        slug=self.headers.get('X-Test-Project') or str(body.get('model','')).removeprefix('test-project-')
+        try:owner=broker.registry.get(slug)['owner']
+        except ValueError:return self.answer(400,{'error':'invalid_owner'})
+        try:
+            with broker.gate.request(owner):return self.execute_message(raw,body)
+        except ValueError as error:
+            if str(error)=='account_maintenance':return self.answer(503,{'error':{'message':'account_maintenance'}})
+            raise
+    def execute_message(self,raw,body):
+        broker=self.server.broker
         selected=self.headers.get('X-Test-Project')
         slug=selected if selected is not None else str(body.get('model','')).removeprefix('test-project-')
         try:owner=broker.registry.get(slug)['owner']
@@ -280,6 +350,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with broker.connect() as db:db.execute("UPDATE attempts SET state='not_dispatched',container=?,status=503,stop_reason=? WHERE id=?",(ident,reason,attempt))
             return self.answer(503,{'error':{'message':reason}})
         with broker.connect() as db:db.execute("UPDATE attempts SET state='running',container=? WHERE id=?",(ident,attempt))
+        receipt_host=broker.inspect(owner)['Config']['Hostname']
         observer=UsageObserver(stream);status=None
         process=None;watch=None
         try:
@@ -305,7 +376,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     else:
                         output.extend(chunk)
                 elif frame.get('done'):
-                    if (frame.get('owner'),frame.get('container'),frame.get('run'),frame.get('attempt'),frame.get('response_sha256'))!=(owner,ident[:12],run,attempt,digest.hexdigest()):raise PolicyError('receipt_mismatch')
+                    if (frame.get('owner'),frame.get('container'),frame.get('run'),frame.get('attempt'),frame.get('response_sha256'))!=(owner,receipt_host,run,attempt,digest.hexdigest()):raise PolicyError('receipt_mismatch')
                     if frame.get('input_sha256')!=input_hash:raise PolicyError('input_receipt_mismatch')
                     done=True
             if process.wait()!=0 or not done or watch.cancelled.is_set():raise PolicyError('worker_interrupted')

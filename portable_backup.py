@@ -34,12 +34,25 @@ class Packages:
             atomic(self.keypath,secrets.token_bytes(32))
         private(self.keypath)
         if len(self.keypath.read_bytes())!=32:raise ValueError('backup_key_invalid')
-        self.jobs=queue.Queue();self.pending=set();self.lock=threading.Lock();self.stopping=threading.Event();self.processes=set();self.metadata_warnings=set()
+        self.jobs=queue.Queue();self.pending=set();self.lock=threading.Lock();self.stopping=threading.Event();self.processes=set();self.metadata_warnings=set();self.observed_revisions={};self.last_automatic={}
         self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
 
     def enqueue(self,owner):
         with self.lock:
             if not self.stopping.is_set() and owner not in self.pending:self.pending.add(owner);self.jobs.put(owner)
+    def observe_revision(self,owner,revision):
+        with self.lock:
+            changed=revision>self.observed_revisions.get(owner,0)
+            if changed:self.observed_revisions[owner]=revision
+        if changed:self.note_revision(owner,revision)
+        status=self.status(owner)
+        if status.get('revision',0)>=revision and not status.get('environment_outdated'):return
+        if not self.broker.protection.state(owner).get('backup_verified'):return
+        now=time.monotonic()
+        with self.lock:
+            if owner in self.pending or now-self.last_automatic.get(owner,-1000)<300:return
+            self.last_automatic[owner]=now
+        self.enqueue(owner)
     def note_revision(self,owner,revision):
         # An auxiliary backup observation must not turn a successful CPA refresh into failure.
         with self.lock:
@@ -53,16 +66,17 @@ class Packages:
         while not self.stopping.is_set():
             owner=self.jobs.get()
             if owner is None:return
-            with self.lock:self.pending.discard(owner)
             try:
                 result=self.export(owner)
                 self.note_revision(owner,result['revision'])
                 failed=False
-            except Exception:failed=True
-            try:write_json(self.folder/('package-status-'+owner+'.json'),{'error':failed,'updated_at':int(time.time())})
+            except Exception as error:failed=True;failure_code=str(error) if isinstance(error,ValueError) and str(error) in {'backup_too_large','backup_expanded_too_large','checkpoint_changed_retry_export','backup_export_failed'} else 'backup_export_failed'
+            try:write_json(self.folder/('package-status-'+owner+'.json'),{'error':failed,'error_code':failure_code if failed else None,'updated_at':int(time.time())})
             except (OSError,ValueError):
                 # A full or detached disk must not kill the queue for other accounts.
                 with self.lock:self.metadata_warnings.add(owner)
+            finally:
+                with self.lock:self.pending.discard(owner)
     def close(self):
         with self.lock:
             self.stopping.set()
@@ -94,15 +108,20 @@ class Packages:
             card=read_json(path);target=self.target(card)
             status=self.folder/('package-status-'+owner+'.json')
             warning=(read_json(status).get('error',False) if status.exists() else False) or owner in self.metadata_warnings
-            if not (target/'latest.json').exists():return {'state':'not_exported','warning':warning,'off_host_verified':False}
+            if not (target/'latest.json').exists():return {'state':'not_exported','warning':warning,'error_code':read_json(status).get('error_code') if status.exists() else None,'off_host_verified':False}
             receipt=read_json(target/'latest.json')
-            return {'warning':warning,'state':'exported','revision':receipt['revision'],'exported_at':receipt['exported_at'],
+            floor=self.folder/('credential-floor-'+owner+'.json')
+            current=read_json(floor)['revision'] if floor.exists() else receipt['revision']
+            stale=current>receipt['revision']
+            saved=receipt.get('spec',{}).get('card',{})
+            environment_outdated=any(saved.get(k)!=card.get(k) for k in ('owner','environment_id','image','runtime','network_config_sha256','network','security_policy_sha256','account_definition'))
+            return {'environment_outdated':environment_outdated,'stale':stale,'current_revision':current,'warning':warning or stale or environment_outdated,'state':'exported','revision':receipt['revision'],'exported_at':receipt['exported_at'],
                     'off_host_verified':False,'external_destination':self.destination!=self.folder/'portable-backups'}
         except (OSError,ValueError,KeyError,subprocess.SubprocessError):return {'state':'unavailable','off_host_verified':False}
 
     def helper(self,card,volumes):
         args=[*DOCKER,'run','--rm','-i','--network','none','--read-only','--user','1001:1001','--cap-drop','ALL',
-              '--security-opt','no-new-privileges','--memory','1g','--pids-limit','80','--tmpfs','/tmp:rw,nosuid,nodev,size=512m,mode=1777']
+              '--security-opt','no-new-privileges','--memory','1g','--pids-limit','80','--tmpfs','/tmp:rw,nosuid,nodev,size=640m,mode=1777']
         for name,target,readonly in volumes:
             args+=['--mount','type=volume,source='+name+',target='+target+(',readonly' if readonly else '')]
         return [*args,'--entrypoint','python3',card['image'],'-B','/opt/native/bundle_io.py']
@@ -126,7 +145,10 @@ class Packages:
                         with self.lock:self.processes.discard(process)
 
                     out.flush();os.fsync(out.fileno())
-                if process.returncode:raise ValueError('backup_export_failed')
+                if process.returncode:
+                    try:code=json.loads(errors).get('error')
+                    except (ValueError,TypeError):code=None
+                    raise ValueError(code if code in {'backup_too_large','backup_expanded_too_large','checkpoint_changed_retry_export'} else 'backup_export_failed')
                 details=json.loads(errors)
                 file=uuid.uuid4().hex+'.cpab';final=target/file
                 os.rename(temp,final)

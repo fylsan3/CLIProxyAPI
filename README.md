@@ -1,6 +1,10 @@
+> 当前候选：mac-production3 / accounts-ui12。账号管理整合范围和待真实验证项目见 [ACCOUNT_MANAGEMENT_RELEASE_CN.md](ACCOUNT_MANAGEMENT_RELEASE_CN.md)。以下旧阶段记录保留供追溯。
+
 # CPA container runtime — source snapshot
 
-Source release of the `mac-production1` container runtime based on CPA v8.1.1. This branch is a source snapshot, not a production deployment or upstream merge. The source and overlays reproduce the separately tested local candidate. The installer supports an empty-account Mac cutover only; see `MAC_RELEASE_CN.md`.
+Source release of the `mac-production3` container runtime and `accounts-ui12` management console, based on CPA v8.1.1. One central scheduler manages separate Ubuntu account containers. The account page provides authorization/browser access, status, reported subscription usage, and explicit account-info updates; the original routing UI edits container priorities and weights. Real subscription permissions are not established by offline tests.
+
+`deploy_existing_accounts.py` performs the authorized Mac upgrade after idle checks, retaining account environment and rollback copies. It does not authorize accounts or send model test requests. Review [ACCOUNT_MANAGEMENT_RELEASE_CN.md](ACCOUNT_MANAGEMENT_RELEASE_CN.md) for scope and outstanding real-world validation.
 
 - `source/`: frozen CPA source, verified by `source-inputs.json`.
 - `src/`: reviewed local overlays, applied using `overlay-inputs.json`.

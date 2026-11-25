@@ -33,9 +33,9 @@ class Browsers:
                                 input=json.dumps(dict(op=op, **args)), text=True, capture_output=True,
                                 timeout=25, check=True)
         value = json.loads(result.stdout)
-        if value.get('error') in ('browser_sandbox_unavailable','browser_start_failed'):
+        if value.get('error') in ('browser_sandbox_unavailable','browser_start_failed','authorization_url_rejected','browser_restore_unavailable'):
             raise ValueError(value['error'])
-        if value.get('error') or value.get('owner') != owner or value.get('host') != info['Id'][:12]:
+        if value.get('error') or value.get('owner') != owner or value.get('host') != info['Config']['Hostname']:
             raise ValueError('browser_operation_failed')
         return info, value
 

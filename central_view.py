@@ -27,12 +27,15 @@ def central_request(path,action,body):
     finally:conn.close()
 
 def merge_central(result,central):
-    rows={row['slug']:row.get('dispatch') for row in central.get('accounts',[]) if valid_slug(row.get('slug'))} if central and central.get('started') else {}
+    available=bool(central and central.get('started'))
+    rows={row['slug']:row.get('dispatch') for row in central.get('accounts',[]) if valid_slug(row.get('slug'))} if available else {}
     for project in result['projects']:
         view=rows.get(project['slug'])
         project['container_ready']=project['ready']
         project['central_dispatch']=view or {'reason':'unknown','eligible':None}
         project['overall_ready']=bool(project['ready'] and view and view.get('eligible') is True)
-    result['central_status_available']=bool(central and central.get('started'))
-    result['refresh_workers']=central.get('refresh_workers') if central else None
+    result['central_status_available']=available
+    result['refresh_workers']=central.get('refresh_workers') if available else None
+    result['scheduler_config']=central.get('scheduler_config') if available else None
+    result['scheduler_in_flight']=central.get('in_flight') if available else None
     return result

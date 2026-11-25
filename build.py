@@ -11,7 +11,12 @@ def run(cmd,env=None,cwd=None):
  return p.stdout.strip()
 def check_overrides():
  def body(path):return path.read_text().split('func applyProviderHeaders(',1)[1].split('\ntype providerHeadersKey',1)[0]
- assert body(ROOT/'src/cmd/server/offline_worker_entry.go')==body(ROOT/'manual-header-reference.go.txt'),'manual overrides changed'
+ # Only the two explicitly authorized container-derived fields may differ.
+ actual=body(ROOT/'src/cmd/server/offline_worker_entry.go')
+ actual=actual.replace('\tplatformOS, platformArch := containerPlatformHeaders()\n','')
+ actual=re.sub(r'("x-stainless-os":\s*)platformOS,',r'\1"Linux",',actual)
+ actual=re.sub(r'("x-stainless-arch":\s*)platformArch,',r'\1"arm64",',actual)
+ assert actual==body(ROOT/'manual-header-reference.go.txt'),'manual overrides changed'
  policy=json.loads((ROOT/'header-policy.json').read_text())
  code=(ROOT/'src/internal/util/container_http_headers.go').read_text().split('var containerRequestBlocked = map[string]bool{',1)[1].split('}',1)[0]
  assert set(policy['request_blocked'])==set(re.findall(r'"([^"]+)":\s*true',code)),'header policies diverged'
@@ -30,10 +35,10 @@ def build_control():
  run([sys.executable,'-B',str(ROOT/'build_page.py')])
  for p in ROOT.rglob('*'):
   if p.is_file() and allowed(str(p.relative_to(ROOT))):manifest['files'][str(p.relative_to(ROOT))]=digest(p)
- manifest['ui_revision']='accounts-ui8'
+ manifest['ui_revision']='accounts-ui12'
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
-def build(images=True):
+def build(images=True, runtime_base=None):
  for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
  from build_inputs import verify_source
  verify_source(ROOT)
@@ -48,9 +53,10 @@ def build(images=True):
  def compile(system,out,args,tags=False,overlay_path=None):
   env['GOOS']=system
   cmd=[str(TOOL/'go/bin/go'),'build','-mod=readonly','-p','2','-overlay',str(overlay_path or ROOT/'overlay.json'),'-o',str(out)]
+  if args==['./cmd/server']:cmd+=['-ldflags','-X main.Version=8.1.1-container-management3']
   if tags:cmd+=['-tags','cpa_offline']
   run(cmd+args,env,SOURCE);print('Built',out.relative_to(ROOT),flush=True)
- compile('linux',ROOT/'image/worker',[str(SOURCE/'cmd/server/offline_worker_entry.go'),str(SOURCE/'cmd/server/offline_refresh_controller.go')],True)
+ compile('linux',ROOT/'image/worker',[str(SOURCE/'cmd/server/offline_worker_entry.go'),str(SOURCE/'cmd/server/offline_refresh_controller.go'),str(SOURCE/'cmd/server/offline_sample_capture.go'),str(SOURCE/'cmd/server/offline_account_info.go')],True)
  compile('linux',ROOT/'central/cli-proxy-api-linux-arm64',['./cmd/server'])
  compile('darwin',ROOT/'central/cli-proxy-api',['./cmd/server'])
  virtual=SOURCE/'cmd/environment-config/main.go'
@@ -64,7 +70,9 @@ def build(images=True):
  with tempfile.TemporaryDirectory(prefix='cpa-unified-image-') as folder:
   p=Path(folder);shutil.copy2(ROOT/'image/worker',p/'worker');(p/'worker').chmod(0o755)
   shutil.copy2(ROOT/'image/socks_adapter.py',p/'socks_adapter.py')
-  (p/'Dockerfile').write_text('FROM '+base['id']+'\nCOPY --chown=1001:1001 worker /opt/native/worker\nCOPY --chown=1001:1001 socks_adapter.py /opt/native/socks_adapter.py\n')
+  shutil.copy2(ROOT/'image/browser_worker.py',p/'browser_worker.py')
+  shutil.copy2(ROOT/'image/bundle_io.py',p/'bundle_io.py')
+  (p/'Dockerfile').write_text('FROM '+(runtime_base or base['id'])+'\nCOPY --chown=1001:1001 worker /opt/native/worker\nCOPY --chown=1001:1001 socks_adapter.py /opt/native/socks_adapter.py\nCOPY --chown=1001:1001 browser_worker.py /opt/sample/worker.py\nCOPY --chown=1001:1001 bundle_io.py /opt/native/bundle_io.py\n')
   image=run(cli+['build','--network','none','-q',str(p)])
  from prepare_test_certificates import prepare
  prepare()
@@ -77,9 +85,9 @@ def build(images=True):
   if not p.is_file() or any(x in p.relative_to(ROOT).parts for x in ['evidence','tests','__pycache__','.git','.build-tools']):continue
   if p.name=='release-manifest.json':continue
   files[str(p.relative_to(ROOT))]=digest(p)
- (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'mac-production1','published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
+ (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'mac-production3','build_runtime_base':runtime_base or base['id'],'published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':False,'container_derived_headers':['X-Stainless-OS','X-Stainless-Arch'],'other_manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
- parser=argparse.ArgumentParser();modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()
  if args.control_only:build_control()
- else:build(not args.compile_only)
+ else:build(not args.compile_only,args.runtime_base)

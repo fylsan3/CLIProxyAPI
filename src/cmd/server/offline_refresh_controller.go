@@ -90,7 +90,7 @@ func (w *worker) register(record *tokenRecord) error {
 	a := record.Auth
 	if a == nil {
 		t := record.Token
-		a = &coreauth.Auth{ID: w.authID(), Provider: "claude", Status: coreauth.StatusActive, Metadata: map[string]any{
+		a = &coreauth.Auth{ID: w.authID(), Provider: "claude", Status: coreauth.StatusActive, CredentialVersion: uint64(record.Revision), NextRefreshAfter: record.NextRefresh, Metadata: map[string]any{
 			"access_token": t.AccessToken, "refresh_token": t.RefreshToken, "expired": t.Expire, "email": t.Email, "account_uuid": t.AccountUUID,
 			"organization_uuid": t.OrganizationUUID, "organization_name": t.OrganizationName, "cloak_mode": "never"}}
 	} else {

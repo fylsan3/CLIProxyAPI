@@ -77,7 +77,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(200,('<html><title>SOCKS-BROWSER-'+owner+'</title><body>SOCKS '+owner+'</body></html>').encode(),'text/html')
         if self.headers.get('Authorization')!='Bearer '+token(current()['revision']):return self.reply(401,{'error':'offline_token_required'})
         record({'owner':owner,'operation':'profile' if self.path.endswith('profile') else 'roles','path':self.path,'header_names':sorted(self.headers.keys())})
-        if self.path=='/api/oauth/profile':return self.reply(200,{'account':{'uuid':'offline-account-'+owner,'email':owner+'@example.invalid'},'organization':{'uuid':'offline-org-'+owner,'name':'Offline'}})
+        if self.path=='/api/oauth/usage':
+            if fixturePath('usage-denied').exists():return self.reply(403,{'error':'fixture_usage_denied'})
+            return self.reply(200,{'five_hour':{'utilization':17,'resets_at':'2026-11-26T03:00:00Z'},'seven_day':{'utilization':42,'resets_at':'2026-11-30T03:00:00Z'}})
+        if self.path=='/api/oauth/profile':return self.reply(200,{'account':{'uuid':'offline-account-'+owner,'email':owner+'@example.invalid'},'organization':{'uuid':'offline-org-'+owner,'name':'Offline','subscription_type':'pro','rate_limit_tier':'default_claude_pro'}})
         if self.path=='/api/oauth/claude_cli/roles':return self.reply(200,{'roles':['offline']})
         self.reply(404,{})
     def do_POST(self):
@@ -121,7 +124,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 save(data);revision=data['revision']
             record({'owner':owner,'operation':grant,'path':self.path,'body_fields':list(body),'header_names':sorted(self.headers.keys()),'revision':revision})
             return self.reply(200,{'access_token':token(revision),'refresh_token':refresh(revision),'token_type':'Bearer','expires_in':28800,
-                'account':{'uuid':'offline-account-'+owner,'email_address':owner+'@example.invalid'},'organization':{'uuid':'offline-org-'+owner,'name':'Offline'}})
+                'account':{'uuid':'offline-account-'+owner,'email_address':owner+'@example.invalid'},'organization':{'uuid':'offline-org-'+owner,'name':'Offline','subscription_type':'pro','rate_limit_tier':'default_claude_pro'}})
         if self.path.split('?')[0] in ('/v1/messages','/v1/messages/count_tokens'):
             safe_headers={name:('[REDACTED]' if name.lower() in ('authorization','x-api-key','cookie') or 'session' in name.lower() or 'request-id' in name.lower() else self.headers.get_all(name)) for name in self.headers.keys()}
             safe_body=json.loads(json.dumps(body))

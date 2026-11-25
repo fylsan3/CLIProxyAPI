@@ -1,11 +1,12 @@
 """Authenticated, bounded archive transport for committed offline account backups."""
-import base64,hashlib,io,json,os,re,shutil,stat,sys,tarfile,tempfile
+import base64,gzip,hashlib,io,json,os,re,shutil,stat,sys,tarfile,tempfile
 from pathlib import Path,PurePosixPath
 from cryptography.hazmat.primitives.ciphers import Cipher,algorithms,modes
 from retention import Store,binding,digest,private,read_json,write_json
 
 MAGIC=b'CPA-BACKUP-1\n'
 LIMIT=128*1024*1024
+EXPANDED_LIMIT=512*1024*1024
 
 class SnapshotReader(Store):
     # Only verify_snapshot is used; no running account disk is opened or locked.
@@ -47,16 +48,19 @@ def export(spec,secret,out):
             self.size+=len(data)
             if self.size>LIMIT:raise ValueError('backup_too_large')
             out.write(encryptor.update(data));return len(data)
-    with tarfile.open(fileobj=Writer(),mode='w|',format=tarfile.USTAR_FORMAT) as archive:
+    with gzip.GzipFile(fileobj=Writer(),mode='wb',compresslevel=3,mtime=0) as compressed, tarfile.open(fileobj=compressed,mode='w|',format=tarfile.PAX_FORMAT) as archive:
         def add(name,data,mode=0o600):
             entry=tarfile.TarInfo(name);entry.size=len(data);entry.mode=mode
             archive.addfile(entry,io.BytesIO(data))
         add('metadata.json',json.dumps(metadata,sort_keys=True).encode())
+        expanded=0
         for name in ('initial',snapshot,'credentials'):
             for path in sorted((root/name).rglob('*')):
                 info=path.lstat();relative='backup/'+path.relative_to(root).as_posix()
                 if stat.S_ISDIR(info.st_mode):
                     entry=tarfile.TarInfo(relative);entry.type=tarfile.DIRTYPE;entry.mode=0o700;archive.addfile(entry);continue
+                expanded+=info.st_size
+                if expanded>EXPANDED_LIMIT:raise ValueError('backup_expanded_too_large')
                 private(path)
                 if not stat.S_ISREG(info.st_mode):raise ValueError('unsafe_backup_entry')
                 if path==root/'credentials/latest.json':add(relative,checkpoint);continue
@@ -85,8 +89,11 @@ def restore(spec,secret,source):
             if len(tail)!=16:raise ValueError('backup_truncated')
             output.write(decryptor.finalize_with_tag(tail))
         extracted=temp/'verified';extracted.mkdir(mode=0o700);names=set()
-        with tarfile.open(archive_path,'r:') as archive:
+        expanded=0
+        with tarfile.open(archive_path,'r:*') as archive:
             for entry in archive:
+                expanded+=entry.size
+                if expanded>EXPANDED_LIMIT:raise ValueError('backup_expanded_too_large')
                 rel=PurePosixPath(entry.name)
                 if not (entry.isfile() or entry.isdir()) or rel.is_absolute() or '..' in rel.parts or str(rel)!=entry.name or entry.name in names:raise ValueError('unsafe_archive_entry')
                 if entry.name!='metadata.json' and not (len(rel.parts)>2 and rel.parts[0]=='backup' and rel.parts[1] in ('initial',snapshot,'credentials')):raise ValueError('unexpected_archive_entry')
@@ -122,5 +129,6 @@ def main():
 
 if __name__=='__main__':
     try:main()
-    except Exception:
-        print('backup_transfer_failed',file=sys.stderr);sys.exit(1)
+    except Exception as error:
+        code=str(error) if isinstance(error,ValueError) and str(error) in {'backup_too_large','backup_expanded_too_large','checkpoint_changed_retry_export','backup_format_invalid','backup_truncated'} else 'backup_transfer_failed'
+        print(json.dumps({'error':code}),file=sys.stderr);sys.exit(1)

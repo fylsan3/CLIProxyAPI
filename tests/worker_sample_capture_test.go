@@ -1,0 +1,16 @@
+package main
+import("bytes";"crypto/sha256";"encoding/hex";"encoding/json";"io";"net/http";"os";"path/filepath";"strings";"testing";"time")
+func armed(t *testing.T,root string,raw []byte) string {t.Helper();h:=sha256.Sum256(raw);id:="0123456789abcdef01234567";b,_:=json.Marshal(modelSampleArm{ID:id,InputSHA256:hex.EncodeToString(h[:]),Expires:time.Now().Add(time.Minute).Unix()});if err:=os.WriteFile(filepath.Join(root,"model-sample-arm.json"),b,0600);err!=nil{t.Fatal(err)};return id}
+func TestOneInputOnlyAndSecrets(t *testing.T){
+ root:=t.TempDir();raw:=[]byte(`{"model":"fixture"}`);id:=armed(t,root,raw)
+ if claimModelSample(root,[]byte(`{}`),"wrong","wrong")!=nil{t.Fatal("unmatched input captured")}
+ s:=claimModelSample(root,raw,"run","attempt");if s==nil{t.Fatal("not claimed")};if claimModelSample(root,raw,"run2","attempt2")!=nil{t.Fatal("captured twice")}
+ request,_:=http.NewRequest("POST","https://api.anthropic.com/v1/messages",bytes.NewReader(raw));request.Header.Set("Authorization","secret-canary");request.Header.Set("X-Stainless-OS","Linux")
+ response:=[]byte("event: error\r\ndata: {\"error\":\"raw\"}\r\n\r\n")
+ res,err:=s.send(request,func(req *http.Request)(*http.Response,error){b,_:=io.ReadAll(req.Body);if !bytes.Equal(b,raw){t.Fatal("request modified")};return &http.Response{StatusCode:403,Header:http.Header{"Set-Cookie":{"cookie-canary"}},Body:io.NopCloser(bytes.NewReader(response)),ContentLength:int64(len(response))},nil})
+ if err!=nil{t.Fatal(err)};got,_:=io.ReadAll(res.Body);res.Body.Close();if !bytes.Equal(got,response){t.Fatal("response modified")}
+ files,_:=filepath.Glob(filepath.Join(root,"model-samples",id,"*","response.json"));if len(files)!=1{t.Fatal(files)};b,_:=os.ReadFile(files[0]);var m map[string]any;json.Unmarshal(b,&m);if m["complete"]!=true{t.Fatal(m)}
+ filepath.Walk(filepath.Join(root,"model-samples"),func(path string,info os.FileInfo,err error)error{if err==nil&&!info.IsDir(){b,_:=os.ReadFile(path);if bytes.Contains(b,[]byte("secret-canary"))||bytes.Contains(b,[]byte("cookie-canary")){t.Fatal("credential persisted")};if info.Mode().Perm()!=0600{t.Fatal(info.Mode())}};return err})
+}
+func TestPartialResponseRemainsPartial(t *testing.T){root:=t.TempDir();raw:=[]byte("{}");id:=armed(t,root,raw);s:=claimModelSample(root,raw,"r","a");req,_:=http.NewRequest("POST","http://local/v1/messages",strings.NewReader("{}"));res,_:=s.send(req,func(*http.Request)(*http.Response,error){return &http.Response{StatusCode:200,Header:http.Header{},Body:io.NopCloser(strings.NewReader("long response"))},nil});b:=make([]byte,2);res.Body.Read(b);res.Body.Close();paths,_:=filepath.Glob(filepath.Join(root,"model-samples",id,"*","response.json"));data,_:=os.ReadFile(paths[0]);var m map[string]any;json.Unmarshal(data,&m);if m["complete"]!=false||m["bytes"]!=float64(2){t.Fatal(m)}}
+func TestUnarmedAndExpiredDoNotCapture(t *testing.T){root:=t.TempDir();if claimModelSample(root,[]byte("{}"),"r","a")!=nil{t.Fatal("unarmed")};armed(t,root,[]byte("{}"));path:=filepath.Join(root,"model-sample-arm.json");b,_:=os.ReadFile(path);var m modelSampleArm;json.Unmarshal(b,&m);m.Expires=time.Now().Add(-time.Minute).Unix();b,_=json.Marshal(m);os.WriteFile(path,b,0600);if claimModelSample(root,[]byte("{}"),"r","a")!=nil{t.Fatal("expired")}}

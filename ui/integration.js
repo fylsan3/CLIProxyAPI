@@ -3,7 +3,7 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui8';
+  host.dataset.uiRevision = 'accounts-ui12';
   const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
   syncStatusTheme();
   new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
@@ -13,25 +13,40 @@
   bridgeStyle.textContent = `html[data-account-console] .main-content > :not(#account-environments-app){display:none!important}
     html[data-account-console] .main-content{animation:none!important}
     html[data-account-console] .nav-item.active:not(#account-console-nav){background:transparent;box-shadow:none;border-color:transparent}
+    .sidebar a[href="#/auth-files"],.sidebar a[href="#/oauth"]{display:none!important}
     #account-console-nav .nav-text{min-width:0}#account-console-nav .nav-label{white-space:normal}`;
   nativeDocument.head.append(bridgeStyle);
+  let navigationSnapshot=null;
+  function updateContainerNavigation(data){
+    if(!data?.runtime_mode)return;
+    navigationSnapshot={count:(data.projects||[]).length};
+    const entry=nativeDocument.querySelector('.sidebar a[href="#/auth-files"]');
+    if(!entry)return;
+    const label=entry.querySelector('.nav-label'),badge=entry.querySelector('.nav-badge-sr-only');
+    if(label&&label.textContent!=='账号凭证')label.textContent='账号凭证';
+    const title='账号凭证：'+navigationSnapshot.count+' 个容器账号';
+    if(entry.getAttribute('aria-label')!==title)entry.setAttribute('aria-label',title);
+    if(entry.title!==title)entry.title=title;
+    if(badge&&badge.textContent!==title)badge.textContent=title;
+  }
   function mountNavigation() {
     const authenticated = session.getState().isAuthenticated;
     nativeDocument.documentElement.toggleAttribute('data-account-console', authenticated && isAccountPage());
-    if (!authenticated) { nativeDocument.getElementById('account-console-nav')?.remove(); return; }
+    if (!authenticated) { navigationSnapshot=null; nativeDocument.getElementById('account-console-nav')?.remove(); return; }
     const reference = nativeDocument.querySelector('.sidebar a[href="#/auth-files"]');
     let entry = nativeDocument.getElementById('account-console-nav');
     if (reference && !entry) {
       entry = nativeDocument.createElement('a'); entry.id = 'account-console-nav'; entry.href = '/accounts.html#/';
-      entry.title = '账号与运行状态';
-      entry.innerHTML = '<span class="nav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M12 6.5h5M12 17.5h5"/></svg></span><span class="nav-text"><span class="nav-label">账号与运行状态</span></span>';
+      entry.title = '账号管理';
+      entry.innerHTML = '<span class="nav-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M12 6.5h5M12 17.5h5"/></svg></span><span class="nav-text"><span class="nav-label">账号管理</span></span>';
       entry.addEventListener('click', e => { if(e.button||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return; e.preventDefault();nativeDocument.querySelector('.sidebar-backdrop.visible')?.click();navigate('/accounts.html#/'); });
       reference.before(entry);
     }
     if (entry) { entry.className = 'nav-item' + (isAccountPage() ? ' active' : ''); if(isAccountPage())entry.setAttribute('aria-current','page');else entry.removeAttribute('aria-current'); }
     const container = nativeDocument.querySelector('.main-content');
     if (container && host.parentElement !== container) container.append(host);
-    nativeDocument.title = isAccountPage() ? '账号与运行状态 · CPA' : 'CPA';
+    nativeDocument.title = isAccountPage() ? '账号管理 · CPA' : 'CPA';
+    if(navigationSnapshot)updateContainerNavigation({runtime_mode:true,projects:Array(navigationSnapshot.count)});
     glassNavigation.schedule();
   }
   __NAVIGATION__
@@ -43,12 +58,14 @@
     if (link) { event.preventDefault(); event.stopPropagation(); nativeDocument.querySelector('.sidebar-backdrop.visible')?.click(); navigate('/management.html'+link.getAttribute('href')); }
   }, true);
   let dispose = () => {}, revision = 0;
+  window.addEventListener('hashchange',()=>{if(['#/auth-files','#/oauth'].includes(location.hash.split('?')[0])){history.replaceState(null,'','/accounts.html#/');sync();}});
   const isAccountPage = () => location.pathname === '/accounts.html';
   function navigate(url) {
     history.pushState(null, '', url);
     dispatchEvent(new PopStateEvent('popstate'));
   }
   function sync() {
+    if(!isAccountPage()&&['#/auth-files','#/oauth'].includes(location.hash.split('?')[0]))history.replaceState(null,'','/accounts.html#/');
     revision++;
     dispose();
     dispose = () => {};
@@ -63,7 +80,7 @@
     const page = nativeDocument.createElement('section');
     page.innerHTML = __MARKUP__;
     root.append(page);
-    nativeDocument.title = '账号与运行状态 · CPA';
+    nativeDocument.title = '账号管理 · CPA';
     const generation = revision, controller = new AbortController(), timers = [];
     dispose = () => { controller.abort(); timers.forEach(clearInterval); };
     const document = {
@@ -93,6 +110,7 @@
         session.getState().logout();
         throw Error('管理登录已失效，请重新登录。');
       }
+      if(endpoint==='snapshot'&&response.ok)updateContainerNavigation(await response.clone().json());
       return response;
     }
     __QUOTA__
@@ -109,4 +127,5 @@
     if (wasAccountPage !== now) { wasAccountPage = now; sync(); }
   });
   sync();
+  __LINKED__
 })(dh, Zc);

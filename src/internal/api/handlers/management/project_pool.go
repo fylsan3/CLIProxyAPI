@@ -10,6 +10,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +52,11 @@ type projectPool struct {
 	refreshWorkers int
 	executor       *projectExecutor
 	mu             sync.Mutex
+	configMu       sync.Mutex
+	configSource   func() *config.Config
+	configKey      string
+	selectorKey    string
+	appliedConfig  *config.Config
 }
 type projectExecutor struct {
 	socket    string
@@ -77,16 +84,76 @@ func (h *Handler) isolatedProjectPool() *projectPool {
 	if value, ok := projectPools.Load(h); ok {
 		return value.(*projectPool)
 	}
-	cfg := &config.Config{}
-	if h.cfg != nil {
-		cfg.Routing = h.cfg.Routing
-		cfg.DisableCooling = h.cfg.DisableCooling
-		cfg.TransientErrorCooldownSeconds = h.cfg.TransientErrorCooldownSeconds
-		cfg.AuthAutoRefreshWorkers = h.cfg.AuthAutoRefreshWorkers
-		cfg.RequestRetry = h.cfg.RequestRetry
-		cfg.MaxRetryCredentials = h.cfg.MaxRetryCredentials
-		cfg.MaxRetryInterval = h.cfg.MaxRetryInterval
+	cfg := projectRoutingConfig(h.cfg)
+	selector := projectSelector(cfg)
+	socket := h.containerControlSocket()
+	sum := sha256.Sum256([]byte(socket))
+	executor := &projectExecutor{socket: socket, namespace: "local-fixture-" + hex.EncodeToString(sum[:8]) + "-"}
+	executor.transport = &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", socket)
+	}}
+	manager := coreauth.NewManager(nil, selector, nil)
+	manager.SetConfig(cfg)
+	manager.SetRetryConfig(cfg.RequestRetry, time.Duration(cfg.MaxRetryInterval)*time.Second, cfg.MaxRetryCredentials)
+	manager.RegisterExecutor(executor)
+	pool := &projectPool{manager: manager, executor: executor, appliedConfig: cfg}
+	pool.configSource = func() *config.Config { h.mu.Lock(); defer h.mu.Unlock(); return projectRoutingConfig(h.cfg) }
+	key, _ := json.Marshal(cfg)
+	pool.configKey = string(key)
+	key, _ = json.Marshal(cfg.Routing)
+	pool.selectorKey = string(key)
+	pool.initRenewal(cfg)
+	projectPools.Store(h, pool)
+	return pool
+}
+
+func (p *projectPool) syncConfig() {
+	if p.configSource == nil {
+		return
 	}
+	cfg := p.configSource()
+	key, _ := json.Marshal(cfg)
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+	if string(key) == p.configKey {
+		return
+	}
+	routing, _ := json.Marshal(cfg.Routing)
+	if string(routing) != p.selectorKey {
+		p.manager.SetSelector(projectSelector(cfg))
+		p.selectorKey = string(routing)
+	}
+	p.manager.SetConfig(cfg)
+	p.manager.SetRetryConfig(cfg.RequestRetry, time.Duration(cfg.MaxRetryInterval)*time.Second, cfg.MaxRetryCredentials)
+	p.renewal.SetConfig(cfg)
+	// The native refresh worker pool is fixed at startup; report that separately.
+	p.appliedConfig = cfg
+	p.configKey = string(key)
+}
+func (p *projectPool) configView() gin.H {
+	p.configMu.Lock()
+	defer p.configMu.Unlock()
+	c := p.appliedConfig
+	if c == nil {
+		return gin.H{}
+	}
+	return gin.H{"strategy": c.Routing.Strategy, "session_affinity": c.Routing.SessionAffinity, "request_retry": c.RequestRetry, "max_retry_interval": c.MaxRetryInterval, "max_retry_credentials": c.MaxRetryCredentials, "refresh_workers_running": p.refreshWorkers, "refresh_workers_configured": p.renewal.LocalProjectRefreshWorkers()}
+}
+
+func projectRoutingConfig(source *config.Config) *config.Config {
+	cfg := &config.Config{}
+	if source != nil {
+		cfg.Routing = source.Routing
+		cfg.DisableCooling = source.DisableCooling
+		cfg.TransientErrorCooldownSeconds = source.TransientErrorCooldownSeconds
+		cfg.AuthAutoRefreshWorkers = source.AuthAutoRefreshWorkers
+		cfg.RequestRetry = source.RequestRetry
+		cfg.MaxRetryCredentials = source.MaxRetryCredentials
+		cfg.MaxRetryInterval = source.MaxRetryInterval
+	}
+	return cfg
+}
+func projectSelector(cfg *config.Config) coreauth.Selector {
 	var selector coreauth.Selector = &coreauth.RoundRobinSelector{}
 	switch cfg.Routing.Strategy {
 	case "fill-first":
@@ -107,23 +174,11 @@ func (h *Handler) isolatedProjectPool() *projectPool {
 			RebindOn: cfg.Routing.SessionAffinityRebindOn,
 		})
 	}
-	socket := h.containerControlSocket()
-	sum := sha256.Sum256([]byte(socket))
-	executor := &projectExecutor{socket: socket, namespace: "local-fixture-" + hex.EncodeToString(sum[:8]) + "-"}
-	executor.transport = &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", socket)
-	}}
-	manager := coreauth.NewManager(nil, selector, nil)
-	manager.SetConfig(cfg)
-	manager.SetRetryConfig(cfg.RequestRetry, time.Duration(cfg.MaxRetryInterval)*time.Second, cfg.MaxRetryCredentials)
-	manager.RegisterExecutor(executor)
-	pool := &projectPool{manager: manager, executor: executor}
-	pool.initRenewal(cfg)
-	projectPools.Store(h, pool)
-	return pool
+	return selector
 }
 
 func (p *projectPool) registerFixtures(ctx context.Context) error {
+	p.syncConfig()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	req, err := http.NewRequestWithContext(ctx, "POST", "http://local/admin/list", strings.NewReader("{}"))
@@ -140,9 +195,14 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 	}
 	var list struct {
 		Projects []struct {
-			Slug   string
-			Models []string
-			State  projectRemoteState
+			Slug    string
+			Models  []string
+			State   projectRemoteState
+			Routing struct {
+				Priority int
+				Weight   int
+			}
+			Identity struct{ Email string }
 		}
 	}
 	if err = json.NewDecoder(io.LimitReader(res.Body, 262144)).Decode(&list); err != nil {
@@ -157,7 +217,22 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 			return err
 		}
 		id := p.executor.namespace + project.Slug
-		if _, ok := p.manager.GetByID(id); ok {
+		if current, ok := p.manager.GetByID(id); ok {
+			priority, weight := strconv.Itoa(project.Routing.Priority), strconv.Itoa(project.Routing.Weight)
+			if current.Attributes["priority"] != priority || current.Attributes["weight"] != weight || current.Label != project.Identity.Email {
+				_, _, err = p.manager.Modify(ctx, id, 0, func(a *coreauth.Auth) error {
+					if a.Attributes == nil {
+						a.Attributes = map[string]string{}
+					}
+					a.Attributes["priority"] = priority
+					a.Attributes["weight"] = weight
+					a.Label = project.Identity.Email
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		models := []*registry.ModelInfo{}
@@ -177,7 +252,7 @@ func (p *projectPool) registerFixtures(ctx context.Context) error {
 			continue
 		}
 		registry.GetGlobalRegistry().RegisterClient(id, projectProvider, models)
-		if _, err = p.manager.Register(ctx, &coreauth.Auth{ID: id, Provider: projectProvider, Status: coreauth.StatusActive, Attributes: map[string]string{"dispatch_model": models[0].ID}}); err != nil {
+		if _, err = p.manager.Register(ctx, &coreauth.Auth{ID: id, Provider: projectProvider, Status: coreauth.StatusActive, Label: project.Identity.Email, Attributes: map[string]string{"dispatch_model": models[0].ID, "priority": strconv.Itoa(project.Routing.Priority), "weight": strconv.Itoa(project.Routing.Weight)}}); err != nil {
 			registry.GetGlobalRegistry().UnregisterClient(id)
 			return err
 		}
@@ -418,5 +493,46 @@ func (h *Handler) ProjectPoolStatus(c *gin.Context) {
 		view["models"] = views
 		rows = append(rows, gin.H{"slug": slug, "dispatch": view})
 	}
-	c.JSON(200, gin.H{"started": true, "accounts": rows, "refresh_workers": pool.refreshWorkers, "refresh_engine": "CPA StartAutoRefresh / ForceRefreshAll", "single_refresh_and_401_share_global_limit": false})
+	c.JSON(200, gin.H{"started": true, "accounts": rows, "refresh_workers": pool.refreshWorkers, "refresh_engine": "CPA StartAutoRefresh / ForceRefreshAll", "single_refresh_and_401_share_global_limit": false, "scheduler_config": pool.configView(), "in_flight": pool.manager.InFlightSnapshot().InFlight})
+}
+
+// Include the actual container manager without registering credentials in the host manager.
+func (h *Handler) ContainerInFlight(c *gin.Context) {
+	if os.Getenv("CPA_CONTAINER_ROUTING") != "1" {
+		h.GetInFlightRequests(c)
+		return
+	}
+	count := int64(0)
+	by := map[string]int64{}
+	var oldest time.Time
+	if h.authManager != nil {
+		n := h.authManager.InFlightSnapshot()
+		count = n.InFlight
+		oldest = n.OldestStartedAt
+		for k, v := range n.ByProvider {
+			by[k] = v
+		}
+	}
+	if value, ok := projectPools.Load(h); ok {
+		n := value.(*projectPool).manager.InFlightSnapshot()
+		count += n.InFlight
+		for k, v := range n.ByProvider {
+			by[k] += v
+		}
+		if !n.OldestStartedAt.IsZero() && (oldest.IsZero() || n.OldestStartedAt.Before(oldest)) {
+			oldest = n.OldestStartedAt
+		}
+	}
+	result := gin.H{"in_flight": count, "by_provider": by}
+	if !oldest.IsZero() {
+		result["oldest_started_at"] = oldest.UTC()
+	}
+	c.JSON(200, result)
+}
+func (h *Handler) ContainerOAuthStart(c *gin.Context) {
+	if os.Getenv("CPA_CONTAINER_ROUTING") == "1" {
+		c.JSON(409, gin.H{"error": "use_account_container_authorization", "management_path": "/accounts.html"})
+		return
+	}
+	h.StartOAuthV8(c)
 }

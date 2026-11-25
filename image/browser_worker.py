@@ -107,11 +107,14 @@ class Worker:
             if current['startup_error'] and op not in ('status','close-browser'):
                 raise ValueError(current['startup_error'])
             if op in ("begin","open-browser"):
-                target=body.get('url') or self.target
+                target=body.get('url')
+                if not target:
+                    target=self.target if self.browser and self.browser.poll() is None else ('about:blank' if op=='open-browser' else self.target)
                 parsed=urlsplit(target or '')
                 official=os.environ.get('CPA_PROVIDER')=='claude-subscription'
                 allowed=(parsed.scheme=='https' and parsed.netloc=='claude.ai' if official else parsed.scheme=='http' and parsed.netloc==owner.lower()+'.upstream.invalid:8080')
-                if not allowed or parsed.path!='/oauth/authorize' or parsed.username is not None:
+                blank_reentry=op=='open-browser' and not body.get('url') and target=='about:blank'
+                if not blank_reentry and (not allowed or parsed.path!='/oauth/authorize' or parsed.username is not None):
                     raise ValueError('authorization_url_rejected')
                 self.target=target
                 if self.browser is None or self.browser.poll() is not None:

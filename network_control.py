@@ -57,6 +57,7 @@ class Control(base.Control):
                   '-e','CPA_PROVIDER='+card['account_definition']['provider'],'-e','FIXTURE_OWNER='+card['owner'],'-e','ENVIRONMENT_ID='+card['environment_id'],
                   '-e','EXPECTED_RUNTIME='+json.dumps(card['runtime'],sort_keys=True),
                   '-e','PROXY_CONFIG_SHA256='+card['network_config_sha256'],'-e','OFFLINE_CENTRAL_REFRESH=1']
+        if card.get('hostname'):common += ['--hostname',card['hostname']]
         if runtime:
             common += ['--security-opt','seccomp='+str(self.seccomp_path),'--network',card['network'],'--dns',self.fixture.get('ip','127.0.0.1'),
                        '--tmpfs','/run:rw,nosuid,nodev,noexec,size=8m,mode=755',
@@ -180,6 +181,7 @@ class Control(base.Control):
         info=json.loads(docker('inspect',card['container']))[0]
         mounts={m['Destination']:m for m in info['Mounts'] if m['Destination'] not in ('/tmp','/run')}
         expected={'/state':('volume',True),'/backup':('backup',True),'/network-config':('network_config',False)}
+        if info['Config']['Hostname']!=card.get('hostname',card['container'][:12]):raise ValueError('container_hostname_changed')
         config=info['HostConfig']
         options=config.get('SecurityOpt') or []
         policies=[json.loads(v.split('=',1)[1]) for v in options if v.startswith('seccomp=')]

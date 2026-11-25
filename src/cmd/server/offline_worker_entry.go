@@ -73,6 +73,7 @@ type worker struct {
 	transport          *providerTransport
 	storageFailed      bool
 	activeCalls        atomic.Int64
+	accountUpdating    atomic.Bool
 	renewing           atomic.Bool
 	manager            *coreauth.Manager
 	store              *accountStore
@@ -89,12 +90,15 @@ type providerTransport struct {
 
 func (t *providerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	allowed := (req.URL.Host == "platform.claude.com" && req.URL.Path == "/v1/oauth/token") ||
-		(req.URL.Host == "api.anthropic.com" && (req.URL.Path == "/api/oauth/profile" || req.URL.Path == "/api/oauth/claude_cli/roles" || req.URL.Path == "/v1/messages" || req.URL.Path == "/v1/messages/count_tokens"))
+		(req.URL.Host == "api.anthropic.com" && (req.URL.Path == "/api/oauth/usage" || req.URL.Path == "/api/oauth/profile" || req.URL.Path == "/api/oauth/claude_cli/roles" || req.URL.Path == "/v1/messages" || req.URL.Path == "/v1/messages/count_tokens"))
 	if !allowed || req.URL.Scheme != "https" || req.URL.User != nil {
 		return nil, errors.New("offline_destination_denied")
 	}
 	if t.provider == "claude-subscription" {
 		copy := req.Clone(req.Context())
+		if copy.URL.Path == "/api/oauth/usage" {
+			copy.Header.Set("User-Agent", "CLIProxyAPI/8.1.1 cpa-container-worker/control-recovery1")
+		}
 		applyProviderHeaders(copy)
 		return t.send(copy, req)
 	}
@@ -117,8 +121,56 @@ func (t *providerTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return t.send(copy, req)
 }
 
-// Apply the explicitly requested model-request header profile at the transport boundary.
-// These fixed declarations do not describe the Go runtime. Keep OAuth control headers separate.
+// containerPlatformHeaders reads the kernel visible inside this worker container.
+// It never uses customer headers or the central controller's host environment.
+func containerPlatformHeaders() (string, string) {
+	var info syscall.Utsname
+	if err := syscall.Uname(&info); err != nil {
+		return "Unknown", "unknown"
+	}
+	var system, machine strings.Builder
+	for _, c := range info.Sysname {
+		if c == 0 {
+			break
+		}
+		system.WriteByte(byte(c))
+	}
+	for _, c := range info.Machine {
+		if c == 0 {
+			break
+		}
+		machine.WriteByte(byte(c))
+	}
+	return normalizeContainerPlatform(system.String(), machine.String())
+}
+
+func normalizeContainerPlatform(system, machine string) (string, string) {
+	osName, arch := "Unknown", "unknown"
+	switch strings.ToLower(strings.TrimSpace(system)) {
+	case "linux":
+		osName = "Linux"
+	case "darwin":
+		osName = "MacOS"
+	case "freebsd":
+		osName = "FreeBSD"
+	case "openbsd":
+		osName = "OpenBSD"
+	}
+	switch strings.ToLower(strings.TrimSpace(machine)) {
+	case "aarch64", "arm64":
+		arch = "arm64"
+	case "x86_64", "amd64", "x64":
+		arch = "x64"
+	case "i386", "i486", "i586", "i686", "386", "x86":
+		arch = "x32"
+	case "arm", "armv6l", "armv7l", "armv8l":
+		arch = "arm"
+	}
+	return osName, arch
+}
+
+// Keep manually selected protocol declarations; only OS and architecture are
+// read from this container. OAuth control headers remain separate.
 func applyProviderHeaders(r *http.Request) {
 	if r.URL.Path != "/v1/messages" && r.URL.Path != "/v1/messages/count_tokens" {
 		if r.URL.Path == "/v1/oauth/token" || r.URL.Path == "/api/oauth/profile" || r.URL.Path == "/api/oauth/claude_cli/roles" {
@@ -131,10 +183,11 @@ func applyProviderHeaders(r *http.Request) {
 		}
 		return
 	}
+	platformOS, platformArch := containerPlatformHeaders()
 	values := map[string]string{
 		"user-agent":                                "claude-cli/2.1.331 (external, sdk-cli)",
-		"x-stainless-os":                            "Linux",
-		"x-stainless-arch":                          "arm64",
+		"x-stainless-os":                            platformOS,
+		"x-stainless-arch":                          platformArch,
 		"x-stainless-runtime":                       "node",
 		"x-stainless-runtime-version":               "v26.12.1",
 		"x-stainless-lang":                          "js",
@@ -169,7 +222,13 @@ func (p *providerHeaderCapture) get() http.Header {
 	return p.headers.Clone()
 }
 func (t *providerTransport) send(request, source *http.Request) (*http.Response, error) {
-	res, err := t.base.RoundTrip(request)
+	var res *http.Response
+	var err error
+	if sample, ok := source.Context().Value(modelSampleKey{}).(*modelSample); ok && (source.URL.Path == "/v1/messages" || source.URL.Path == "/v1/messages/count_tokens") {
+		res, err = sample.send(request, t.base.RoundTrip)
+	} else {
+		res, err = t.base.RoundTrip(request)
+	}
 	if res != nil && (source.URL.Path == "/v1/messages" || source.URL.Path == "/v1/messages/count_tokens") {
 		if capture, ok := source.Context().Value(providerHeadersKey{}).(*providerHeaderCapture); ok {
 			capture.mu.Lock()
@@ -348,6 +407,22 @@ func (w *worker) status() map[string]any {
 		quota["observed_at"] = auth.Quota.ObservedAt.Format(time.RFC3339Nano)
 	}
 	data["quota_observation"] = quota
+	data["account_identity"] = accountIdentity(auth)
+	data["account_observation"] = readAccountObservation(auth)
+	data["account_updating"] = w.accountUpdating.Load()
+	data["subscription"] = map[string]any{"reported": false, "source": "saved_credential_metadata"}
+	for _, key := range []string{"subscription_type", "rate_limit_tier", "plan_type"} {
+		if value, ok := auth.Metadata[key].(string); ok && len(value) > 0 && len(value) < 100 {
+			info := data["subscription"].(map[string]any)
+			info[key] = value
+			info["reported"] = true
+		}
+	}
+	if value, ok := auth.Metadata["email"].(string); ok {
+		if at := strings.IndexByte(value, '@'); at > 0 {
+			data["account_email_masked"] = value[:1] + "***" + value[at:]
+		}
+	}
 	data["authorized"] = true
 	data["revision"] = auth.CredentialVersion
 	expiry, valid := auth.AccessTokenExpirationTime()
@@ -387,6 +462,10 @@ func (w *worker) status() map[string]any {
 	return data
 }
 func (w *worker) authHandler(out http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/auth/account-update" {
+		w.updateAccount(out, req)
+		return
+	}
 	if req.URL.Path == "/auth/complete" {
 		w.completeAuthorization(out, req)
 		return
@@ -764,6 +843,9 @@ func (w *worker) messages(out http.ResponseWriter, req *http.Request) {
 	capture := &providerHeaderCapture{}
 	ctx := coreauth.WithRequestScopedErrorConfig(helps.WithContainerResponseMode(req.Context()), cfg)
 	ctx = context.WithValue(ctx, providerHeadersKey{}, capture)
+	if sample := claimModelSample("/state", raw, req.Header.Get("X-Offline-Run"), req.Header.Get("X-Offline-Attempt")); sample != nil {
+		ctx = context.WithValue(ctx, modelSampleKey{}, sample)
+	}
 	w.manager.SetConfig(cfg)
 	ctx = context.WithValue(ctx, "cliproxy.roundtripper", http.RoundTripper(w.transport))
 	ctx = context.WithValue(ctx, offlineTraceKey{}, offlineTrace{Run: req.Header.Get("X-Offline-Run"), Attempt: req.Header.Get("X-Offline-Attempt")})
@@ -913,7 +995,7 @@ func call() error {
 		return err
 	}
 	switch input.Path {
-	case "/health", "/auth/refresh-check", "/auth/begin", "/auth/complete", "/auth/cancel", "/auth/refresh", "/v1/messages", "/v1/messages/count_tokens":
+	case "/health", "/auth/account-update", "/auth/refresh-check", "/auth/begin", "/auth/complete", "/auth/cancel", "/auth/refresh", "/v1/messages", "/v1/messages/count_tokens":
 	default:
 		return errors.New("unknown_action")
 	}

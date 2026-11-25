@@ -1,3 +1,5 @@
+> 当前候选：mac-production3 / accounts-ui12。账号管理整合范围和待真实验证项目见 [ACCOUNT_MANAGEMENT_RELEASE_CN.md](ACCOUNT_MANAGEMENT_RELEASE_CN.md)。以下旧阶段记录保留供追溯。
+
 # 2026-11-25 源码交付状态
 
 mac-production1 在 portable-capture1 上增加 Mac 生产配置检查、保留既有访问密钥和管理密码、内部控制认证、完整 launchd 切换与回滚。Go 执行器及手动请求头未改。

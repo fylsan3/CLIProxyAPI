@@ -25,5 +25,9 @@
   "internal/runtime/executor/claude_executor_container.go": "src/internal/runtime/executor/claude_executor_container.go",
   "internal/runtime/executor/helps/utls_client.go": "src/internal/runtime/executor/helps/utls_client.go",
   "internal/api/handlers/management/container_socket.go": "src/internal/api/handlers/management/container_socket.go",
-  "internal/api/container_control_key.go": "src/internal/api/container_control_key.go"
+  "internal/api/container_control_key.go": "src/internal/api/container_control_key.go",
+  "cmd/server/offline_sample_capture.go": "src/cmd/server/offline_sample_capture.go",
+  "cmd/server/offline_account_info.go": "src/cmd/server/offline_account_info.go",
+  "internal/auth/claude/container_account.go": "src/internal/auth/claude/container_account.go",
+  "internal/api/handlers/management/container_credentials.go": "src/internal/api/handlers/management/container_credentials.go"
 }

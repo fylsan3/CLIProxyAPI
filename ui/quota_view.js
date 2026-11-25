@@ -21,3 +21,34 @@ function quotaLines(observation) {
 }
 if(typeof module!=='undefined')module.exports={quotaLines};
 
+
+// Explicit reported subscription fields only; no inference from usage or token lifetime.
+function subscriptionLabel(state){
+ const p=state?.account_observation?.profile?.values||{},v={...(state?.subscription||{}),...p};
+ const raw=[v.subscription_type,v.plan_type,v.rate_limit_tier].filter(Boolean).join(' · ');
+ if(/max_20x|20x/i.test(raw))return 'Max 20×';if(/max_5x|5x/i.test(raw))return 'Max 5×';
+ if(/\bpro\b|claude_pro/i.test(raw))return 'Pro';if(/max/i.test(raw))return 'Max';return raw||'档位未报告';
+}
+function accountQuotaWindows(state){
+ const active=state?.account_observation?.usage,passive=state?.quota_observation;
+ const headers=Object.fromEntries(Object.entries(passive?.signals||{}).map(([k,v])=>[k.toLowerCase(),v]));
+ return [['five_hour','5h','5 小时'],['seven_day','7d','7 天']].map(([key,short,label])=>{
+  const value=active?.values?.[key],prefix='anthropic-ratelimit-unified-'+short+'-';
+  const ratio=headers[prefix+'utilization'],n=ratio!==undefined&&String(ratio).trim()!==''?Number(ratio):NaN;
+  const valid=Number.isFinite(n)&&n>=0&&n<=1;
+  if(value&&(!valid||!Number.isFinite(Date.parse(passive?.observed_at||''))||Date.parse(active.observed_at)>=Date.parse(passive?.observed_at||'')))return {label,percent:value.utilization,reset:value.resets_at,stamp:active.observed_at,source:'资料查询'};
+  return {label,percent:valid?n*100:undefined,reset:/^[0-9]+$/.test(headers[prefix+'reset']||'')&&Number.isFinite(new Date(Number(headers[prefix+'reset'])*1000).getTime())?new Date(Number(headers[prefix+'reset'])*1000).toISOString():undefined,stamp:passive?.observed_at,source:'模型回复'};
+ });
+}
+function renderAccountQuota(parent,p){
+ const wrap=text(parent,'section','','account-quota');wrap.setAttribute('aria-label','订阅额度');
+ for(const item of accountQuotaWindows(p.state)){
+  const row=text(wrap,'div','','quota-window'),heading=text(row,'div','','quota-heading');text(heading,'span',item.label);const valid=Number.isFinite(item.percent);text(heading,'strong',valid?Number(item.percent.toFixed(2))+'% 已用':'未报告');
+  const meter=text(row,'div','','quota-meter');if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+'已用额度');meter.setAttribute('aria-valuenow',String(item.percent));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=item.percent+'%';}
+  if(item.reset&&Number.isFinite(Date.parse(item.reset))){text(row,'p','重置 '+new Date(item.reset).toLocaleString(),'help');if(Date.parse(item.reset)<=Date.now())text(row,'p','已过所报重置时间，请更新资料。','help');}
+  if(item.stamp)text(row,'p',item.source+' · '+new Date(item.stamp).toLocaleString(),'help');
+ }
+ const observation=p.state?.account_observation;
+ for(const [key,label] of [['profile','档位'],['usage','额度']])if(observation?.[key]?.error)text(wrap,'p',label+'查询失败；'+(observation[key].observed_at?'显示上次成功结果。':'尚无结果。'),'status-bad');
+ text(wrap,'p','历史观测，不代表实时余额。','help');
+}
