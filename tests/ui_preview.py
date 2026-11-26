@@ -11,7 +11,7 @@ def snapshot():
     a=copy.deepcopy(base);a.update(slug='research-a',label='研发账号 A')
     b=copy.deepcopy(base);b.update(slug='research-b',label='研发账号 B · 待授权',overall_ready=False,reason='authorization_pending',state={'active_calls':0,'revision':0,'authorized':False},protection={'phase':'authorizing','backup_verified':False,'initial_backup':True},central_dispatch={'reason':'unavailable'})
     mode=MODE.read_text().strip() if MODE.exists() else 'populated'
-    if mode=='populated':sample['projects']=[a,b]
+    if mode in ('populated','subscription-badge','quota-alignment'):sample['projects']=[a,b]
     if mode.startswith('creation-'):
         a.update(overall_ready=False,reason='missing',container=None,state=None,network=None,protection={'phase':'creating','backup_verified':False,'creation_steps':[{'step':'checking_socks','status':'completed','started_at':1795590000},{'step':'checking_exit','status':'running','started_at':1795590001}]})
         if mode=='creation-error':a['protection'].update(phase='creation_failed',creation_error='proxy_auth_rejected',creation_steps=[{'step':'checking_socks','status':'failed','started_at':1795590000}])
@@ -37,6 +37,10 @@ def snapshot():
     if mode=='quota':
         sample['projects']=[a,b]
         a['state']['account_observation']={'usage':{'observed_at':'2026-11-26T06:00:00Z','values':{'five_hour':{'utilization':0},'seven_day':{'utilization':42},'limits':[{'kind':'weekly_scoped','percent':0,'is_active':False,'scope':{'model':{'display_name':'Fable'}}}]}}}
+    if mode=='quota-alignment':
+        a['state']['account_observation']['usage']['values']['five_hour']['resets_at']='2020-01-01T00:00:00Z'
+        for value in a['state']['account_observation']['usage']['values'].values():value['utilization']=0
+    if mode=='subscription-badge':a['state']['subscription']={'subscription_type':'ultra'}
     return sample
 
 class Handler(http.server.BaseHTTPRequestHandler):
