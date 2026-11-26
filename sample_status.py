@@ -6,6 +6,10 @@ def response_review(sample):
     result={'http_response':'complete' if completeness.get('response') else 'end_unconfirmed',
             'model_response':'not_observed','client_delivery':'not_observed',
             'original_full_replay_eligible':bool(completeness.get('original_full_replay_eligible'))}
+    observed=sample.get('field_provenance',{}).get('worker_return')
+    if observed:
+        result['worker_return']='write_failed_or_interrupted' if observed.get('write_failed') or observed.get('context_cancelled') or not observed.get('handler_completed') else 'written_to_broker'
+    result['http_end_reason']=sample.get('http_end_reason','historical_not_recorded')
     response=sample.get('response',{});body=response.get('body',{})
     if sample.get('request',{}).get('path')!='/v1/messages':return result
     if response.get('status',0)>=400:result['model_response']='upstream_error';return result

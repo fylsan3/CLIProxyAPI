@@ -369,7 +369,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         process=None;watch=None
         try:
             process=subprocess.Popen(CLI+['exec','--user','1001:1001','-i',ident,'/opt/native/worker','call'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-            process.stdin.write(json.dumps({'path':self.path,'body':body,'headers':request_headers(self.headers),'execution_config':self.headers.get('X-Offline-Execution-Config',''),'alt':self.headers.get('X-Offline-Alt',''),'model':self.headers.get('X-Offline-Model',''),'stream':stream,'source_format':self.headers.get('X-Offline-Source-Format',''),'response_format':self.headers.get('X-Offline-Response-Format',''),'run':run,'attempt':attempt,'watch_input':True}).encode()+b'\n');process.stdin.flush()
+            process.stdin.write(json.dumps({'path':self.path,'body':body,'headers':request_headers(self.headers),'execution_config':self.headers.get('X-Offline-Execution-Config',''),'alt':self.headers.get('X-Offline-Alt',''),'model':self.headers.get('X-Offline-Model',''),'stream':stream,'source_format':self.headers.get('X-Offline-Source-Format',''),'response_format':self.headers.get('X-Offline-Response-Format',''),'provenance':{'central_ingress':self.headers.get('X-Offline-Ingress-SHA256',''),'broker_ingress':hashlib.sha256(raw).hexdigest(),'broker_forward':input_hash},'run':run,'attempt':attempt,'watch_input':True}).encode()+b'\n');process.stdin.flush()
             watch=RequestWatch(self.connection,process,broker.stopping)
             first=json.loads(process.stdout.readline());status=first['status'];headers=first.get('headers',{})
             output=bytearray();digest=hashlib.sha256()

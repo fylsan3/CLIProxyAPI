@@ -218,6 +218,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 'header_names':sorted(self.headers.keys()),'body_fields':list(body),'input_sha256':hashlib.sha256(raw).hexdigest(),
                 'response_sha256':hashlib.sha256(response_raw).hexdigest(),'revision':current()['revision'],
                 'model':body.get('model'),'message_sizes':[len(json.dumps(m,ensure_ascii=False).encode()) for m in body.get('messages',[])],'request_messages':body.get('messages') if case=='tool_payload' else None,'tools':body.get('tools') if case=='tool_payload' else None,'system':body.get('system'),'metadata_fields':list((body.get('metadata') or {}).keys())})
+        if case=='archive_gzip':
+            import gzip
+            encoded=gzip.compress(response_raw)
+            self.send_response(status);self.send_header('Content-Type',kind);self.send_header('Content-Encoding','gzip');self.send_header('Transfer-Encoding','chunked');self.send_header('Trailer','X-Archive-End');self.end_headers()
+            self.wfile.write(('%x\r\n'%len(encoded)).encode()+encoded+b'\r\n');self.wfile.flush()
+            time.sleep(.05)
+            self.wfile.write(b'0\r\nX-Archive-End: complete\r\n\r\n');self.wfile.flush();return
         self.send_response(status);self.send_header('Content-Type',kind);self.send_header('Content-Length',str(len(response_raw)));self.send_header('Request-Id','req_offline_'+owner)
         self.feature_headers()
         if fixturePath('quota-headers.json').exists():

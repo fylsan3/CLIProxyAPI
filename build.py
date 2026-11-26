@@ -73,7 +73,7 @@ def build(images=True, runtime_base=None, fixture_base=None):
  base=json.loads((ROOT/'base-images.json').read_text())
  with tempfile.TemporaryDirectory(prefix='cpa-unified-image-') as folder:
   p=Path(folder);shutil.copy2(ROOT/'image/worker',p/'worker');(p/'worker').chmod(0o755)
-  runtime_files={'account_header_policy.json':'/opt/native/account_header_policy.json','browser_worker.py':'/opt/sample/worker.py','http_archive.py':'/opt/native/http_archive.py','sample_export.py':'/opt/native/sample_export.py','bundle_io.py':'/opt/native/bundle_io.py','entry.py':'/opt/native/entry.py','network_boot.py':'/opt/native/network_boot.py','network_gate.py':'/opt/native/network_gate.py','locale_probe.py':'/opt/native/locale_probe.py','browser_resources.py':'/opt/native/browser_resources.py'}
+  runtime_files={'field_provenance.py':'/opt/native/field_provenance.py','account_header_policy.json':'/opt/native/account_header_policy.json','browser_worker.py':'/opt/sample/worker.py','http_archive.py':'/opt/native/http_archive.py','sample_export.py':'/opt/native/sample_export.py','bundle_io.py':'/opt/native/bundle_io.py','entry.py':'/opt/native/entry.py','network_boot.py':'/opt/native/network_boot.py','network_gate.py':'/opt/native/network_gate.py','locale_probe.py':'/opt/native/locale_probe.py','browser_resources.py':'/opt/native/browser_resources.py'}
   instructions='FROM '+(runtime_base or base['id'])+'\nCOPY --chown=1001:1001 worker /opt/native/worker\n'
   for name,destination in runtime_files.items():
    shutil.copy2(ROOT/'image'/name,p/name);instructions+='COPY --chown=1001:1001 '+name+' '+destination+'\n'

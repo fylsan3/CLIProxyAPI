@@ -2,7 +2,7 @@
 import functools,hashlib,json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
-VERSION='container-native7-policy2'
+VERSION='container-native7-audit3'
 @functools.lru_cache(maxsize=1)
 def release_info():
  manifest=json.loads((ROOT/'release-manifest.json').read_text())

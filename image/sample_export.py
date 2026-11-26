@@ -6,6 +6,7 @@ import gzip,hashlib,hmac,json,os,re,zlib
 from pathlib import Path
 from urllib.parse import urlsplit,parse_qsl
 import http_archive
+import field_provenance
 
 SAFE_KEYS=set('model messages system tools metadata role content type text name input id tool_use_id tool_result is_error stop_reason stop_sequence usage input_tokens output_tokens cache_creation_input_tokens cache_read_input_tokens event index delta message error code status request_id program grant_id cedar_ember grants eligible ineligible_reason at_limit next_grant_id weekly_resets_at cooldown_until label resets_total resets_left starts_at ends_at clears paused usable_now use_requires_limit percent_used five_hour seven_day seven_day_overage_included utilization resets_at subscription_type rate_limit_tier organization account uuid email refresh_token access_token expires_in token_type scope stream max_tokens temperature top_p input_schema properties required additionalProperties description signature thinking partial_json'.split())
 ENUMS=set('user assistant system text image tool_use tool_result message message_start message_delta message_stop content_block_start content_block_delta content_block_stop text_delta input_json_delta thinking_delta signature_delta end_turn tool_use max_tokens stop_sequence error ping api_error rate_limit_error authentication_error permission_error overloaded_error reset already_used not_limited cooldown ineligible unavailable cedar_ember five_hour seven_day seven_day_overage_included'.split())
@@ -88,6 +89,8 @@ class Sanitizer:
    'capture_policy':{'version':q.get('policy_version'),'sha256':q.get('policy_sha256')},
    'completeness':{'request':bool(q.get('complete')),'response':bool(r.get('complete')),'original_full_replay_eligible':bool(q.get('complete') and r.get('complete'))},
    'header_comparison':self.header_comparison(q),
+   'field_provenance':field_provenance.export(folder,key,body,self),
+   'http_end_reason':r.get('end_reason','historical_not_recorded'),
    'request':{'method':q['method'],'host':u.hostname if u.hostname in ('api.anthropic.com','platform.claude.com') else 'fixture.invalid','path':path,
     'query':[[k,v] if k in ('cedar_ember','skip_spend') and v=='1' else [self.token(k),self.token(v)] for k,v in parse_qsl(u.query)],
     'headers':self.headers([(x['name'],x['values']) for x in q['wire_headers']]),'body':self.body(body,q['headers']),

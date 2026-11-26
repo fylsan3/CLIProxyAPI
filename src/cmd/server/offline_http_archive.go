@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -207,16 +208,22 @@ func (s *httpArchive) record(path string, v any) bool {
 
 type archiveBody struct {
 	io.ReadCloser
-	file     *archiveFile
-	digest   hash.Hash
-	bytes    int64
-	expected int64
-	once     sync.Once
-	done     func(int64, string, bool)
+	file         *archiveFile
+	digest       hash.Hash
+	bytes        int64
+	expected     int64
+	once         sync.Once
+	done         func(int64, string, bool)
+	ctx          context.Context
+	response     bool
+	ended        bool
+	reason       string
+	drainExpired atomic.Bool
 }
 
 func (b *archiveBody) finish(complete bool) {
 	b.once.Do(func() {
+		b.ended = true
 		err := b.file.close()
 		b.done(b.bytes, hex.EncodeToString(b.digest.Sum(nil)), complete && err == nil)
 	})
@@ -229,12 +236,38 @@ func (b *archiveBody) Read(p []byte) (int, error) {
 		_, _ = b.file.Write(p[:n])
 	}
 	if err != nil {
+		b.reason = "read_error"
+		if err == io.EOF {
+			b.reason = "eof"
+		}
+		if b.drainExpired.Load() {
+			b.reason = "close_drain_deadline"
+		}
 		b.finish(err == io.EOF && (b.expected < 0 || b.bytes == b.expected))
 	}
 	return n, err
 }
 func (b *archiveBody) Close() error {
+	// Native CPA deliberately stops at message_stop. Only an opted-in archive
+	// drains a bounded HTTP tail after the consumer is finished. This is not a
+	// request timeout: no timer runs while a model task is executing.
+	if b.response && !b.ended && (b.ctx == nil || b.ctx.Err() == nil) && !(b.expected >= 0 && b.bytes == b.expected) {
+		timer := time.AfterFunc(250*time.Millisecond, func() { b.drainExpired.Store(true); _ = b.ReadCloser.Close() })
+		_, _ = io.CopyN(io.Discard, b, 256*1024)
+		timer.Stop()
+		if !b.ended {
+			b.reason = "close_drain_limit"
+		}
+	}
 	err := b.ReadCloser.Close()
+	if b.reason == "" {
+		b.reason = "consumer_closed"
+		if b.ctx != nil && b.ctx.Err() != nil {
+			b.reason = "cancelled"
+		} else if err == nil && b.expected >= 0 && b.bytes == b.expected {
+			b.reason = "content_length"
+		}
+	}
 	b.finish(err == nil && b.expected >= 0 && b.bytes == b.expected)
 	return err
 }
@@ -260,6 +293,16 @@ func (s *httpArchive) sendCompared(original, before *http.Request, next func(*ht
 	meta := map[string]any{"archive_id": s.id, "exchange": name, "kind": s.kind, "method": original.Method, "url": original.URL.String(), "host": original.Host, "headers": original.Header.Clone(), "content_length": original.ContentLength, "transfer_encoding": original.TransferEncoding, "close": original.Close, "captured_at": time.Now().UTC(), "policy_version": accountheaders.Version(), "policy_sha256": accountheaders.Digest(), "complete": false}
 	if before != nil {
 		meta["before_override"] = map[string]any{"headers": before.Header.Clone(), "close": before.Close, "boundary": "executor_before_final_header_policy"}
+		if before.GetBody != nil {
+			copyBody, e := before.GetBody()
+			if e == nil {
+				raw, readErr := io.ReadAll(copyBody)
+				_ = copyBody.Close()
+				if readErr == nil {
+					s.snapshot(filepath.Join(dir, "native-request.json.enc"), "native_prepared", raw, before.Header, nil)
+				}
+			}
+		}
 	}
 	wire := []map[string]any{}
 	writes := 0
@@ -329,10 +372,14 @@ func (s *httpArchive) sendCompared(original, before *http.Request, next func(*ht
 	if res.Uncompressed {
 		s.failed.Store(true)
 	}
+	var observed *archiveBody
 	done := func(n int64, sum string, complete bool) {
 		record["bytes"] = n
 		record["sha256"] = sum
 		record["complete"] = complete
+		if observed != nil {
+			record["end_reason"] = observed.reason
+		}
 		record["trailers"] = res.Trailer.Clone()
 		if !complete {
 			recordCaptureIssue(s.root, "response_capture_incomplete")
@@ -352,7 +399,51 @@ func (s *httpArchive) sendCompared(original, before *http.Request, next func(*ht
 		empty := sha256.Sum256(nil)
 		done(0, hex.EncodeToString(empty[:]), responseFile.close() == nil)
 	} else {
-		res.Body = &archiveBody{ReadCloser: res.Body, file: responseFile, digest: sha256.New(), expected: res.ContentLength, done: done}
+		observed = &archiveBody{ReadCloser: res.Body, file: responseFile, digest: sha256.New(), expected: res.ContentLength, done: done, response: true, ctx: original.Context()}
+		res.Body = observed
 	}
 	return res, nil
+}
+
+// Raw snapshots remain authenticated/encrypted. They never change business data.
+func (s *httpArchive) snapshot(path, stage string, raw []byte, headers http.Header, links map[string]string) {
+	sum := sha256.Sum256(raw)
+	s.record(path, map[string]any{"schema": 1, "archive_id": s.id, "stage": stage, "body": raw, "sha256": hex.EncodeToString(sum[:]), "headers": headers.Clone(), "links": links})
+}
+
+// This observes worker -> broker writes, never claims end-client delivery.
+type archiveResponseWriter struct {
+	http.ResponseWriter
+	archive *httpArchive
+	digest  hash.Hash
+	bytes   int64
+	failed  bool
+	status  int
+}
+
+func (w *archiveResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *archiveResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = 200
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += int64(n)
+	w.digest.Write(p[:n])
+	if err != nil || n != len(p) {
+		w.failed = true
+	}
+	return n, err
+}
+func (w *archiveResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+func (w *archiveResponseWriter) finish(ctx context.Context, normal bool) {
+	w.archive.record(filepath.Join(w.archive.dir, "worker-return.json.enc"), map[string]any{"archive_id": w.archive.id, "boundary": "worker_to_broker", "bytes": w.bytes, "sha256": hex.EncodeToString(w.digest.Sum(nil)), "status": w.status, "write_failed": w.failed, "handler_completed": normal, "context_cancelled": ctx.Err() != nil, "client_delivery": "not_observed"})
 }

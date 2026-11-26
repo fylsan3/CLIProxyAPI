@@ -5,6 +5,7 @@ import (
  "context"
  "compress/gzip"
  "crypto/cipher"
+ "crypto/sha256"
  "encoding/binary"
  "encoding/json"
  "io"
@@ -14,7 +15,44 @@ import (
  "path/filepath"
  "strings"
  "testing"
+ "time"
 )
+
+func TestArchiveCloseDrainsOnlyFinishedConsumerTail(t *testing.T) {
+ a,err:=newHTTPArchive(t.TempDir(),"tail");if err!=nil{t.Fatal(err)}
+ payload:=strings.Repeat("fixture",1000)
+ srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  w.Header().Set("Trailer","X-End");w.WriteHeader(200);w.(http.Flusher).Flush();w.Write([]byte(payload));w.Header().Set("X-End","complete")
+ }));defer srv.Close()
+ req,_:=http.NewRequest("GET",srv.URL,nil);res,err:=a.send(req,http.DefaultTransport.RoundTrip);if err!=nil{t.Fatal(err)}
+ p:=make([]byte,1);res.Body.Read(p);res.Body.Close()
+ meta:=readMeta(t,a,filepath.Join(a.dir,"0001"),"response.json.enc")
+ if meta["complete"]!=true||meta["end_reason"]!="eof"{t.Fatal(meta)}
+ if string(decryptTest(t,a.aead,filepath.Join(a.dir,"0001","response.bin.enc")))!=payload{t.Fatal("tail lost")}
+ if meta["trailers"].(map[string]any)["X-End"].([]any)[0]!="complete"{t.Fatal("trailer lost")}
+}
+
+func TestArchiveCloseTailDeadlineCannotClaimCompletion(t *testing.T) {
+ a,_:=newHTTPArchive(t.TempDir(),"tail-timeout")
+ srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Write([]byte("x"));w.(http.Flusher).Flush();<-r.Context().Done()}));defer srv.Close()
+ req,_:=http.NewRequest("GET",srv.URL,nil);res,err:=a.send(req,http.DefaultTransport.RoundTrip);if err!=nil{t.Fatal(err)}
+ p:=make([]byte,1);res.Body.Read(p);start:=time.Now();res.Body.Close()
+ if time.Since(start)>2*time.Second{t.Fatal("tail blocked native completion")}
+ meta:=readMeta(t,a,filepath.Join(a.dir,"0001"),"response.json.enc")
+ if meta["complete"]!=false||meta["end_reason"]!="close_drain_deadline"{t.Fatal(meta)}
+}
+
+func TestIngressAndNativeSnapshotsArePrivateAndDoNotMutate(t *testing.T) {
+ a,_:=newHTTPArchive(t.TempDir(),"provenance")
+ raw:=[]byte(`{"system":"PRIVATE_SYSTEM","metadata":{"user_id":"PRIVATE_ID"}}`)
+ a.snapshot(filepath.Join(a.dir,"ingress.json.enc"),"worker_ingress",raw,http.Header{"Authorization":[]string{"SECRET"}},nil)
+ v:=readMeta(t,a,a.dir,"ingress.json.enc");if v["stage"]!="worker_ingress"{t.Fatal(v)}
+ data,_:=os.ReadFile(filepath.Join(a.dir,"ingress.json.enc"));if bytes.Contains(data,[]byte("PRIVATE"))||bytes.Contains(data,[]byte("SECRET")){t.Fatal("plaintext")}
+ w:=&archiveResponseWriter{ResponseWriter:httptest.NewRecorder(),archive:a,digest:sha256.New()}
+ w.WriteHeader(403);w.Write([]byte("original error"));w.finish(context.Background(),true)
+ result:=readMeta(t,a,a.dir,"worker-return.json.enc")
+ if result["status"]!=float64(403)||result["client_delivery"]!="not_observed"||result["handler_completed"]!=true{t.Fatal(result)}
+}
 
 func decryptTest(t *testing.T,aead cipher.AEAD,path string) []byte {
  t.Helper();raw,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}

@@ -960,6 +960,30 @@ func (w *worker) messages(out http.ResponseWriter, req *http.Request) {
 		}
 
 	}
+	archive, _ := ctx.Value(httpArchiveKey{}).(*httpArchive)
+	if archive == nil && captureWindowActive("/state") {
+		archive, err = newHTTPArchive("/state", "account-test-window")
+		if err != nil {
+			recordCaptureIssue("/state", "archive_create_failed")
+		}
+	}
+	if archive != nil {
+		ctx = context.WithValue(ctx, httpArchiveKey{}, archive)
+		links := map[string]string{"run": req.Header.Get("X-Offline-Run"), "attempt": req.Header.Get("X-Offline-Attempt")}
+		for _, name := range []string{"central_ingress", "broker_ingress", "broker_forward"} {
+			links[name] = req.Header.Get("X-Offline-Provenance-" + name)
+		}
+		archive.snapshot(filepath.Join(archive.dir, "ingress.json.enc"), "worker_ingress", raw, options.Headers, links)
+		observed := &archiveResponseWriter{ResponseWriter: out, archive: archive, digest: sha256.New()}
+		out = observed
+		defer func() {
+			if p := recover(); p != nil {
+				observed.finish(ctx, false)
+				panic(p)
+			}
+			observed.finish(ctx, true)
+		}()
+	}
 	w.manager.SetConfig(cfg)
 	ctx = context.WithValue(ctx, "cliproxy.roundtripper", http.RoundTripper(w.transport))
 	ctx = context.WithValue(ctx, offlineTraceKey{}, offlineTrace{Run: req.Header.Get("X-Offline-Run"), Attempt: req.Header.Get("X-Offline-Attempt")})
@@ -1108,18 +1132,19 @@ func serve() error {
 // call is the fixed-command broker bridge. It never reads or returns credential files.
 func call() error {
 	var input struct {
-		Path            string          `json:"path"`
-		Body            json.RawMessage `json:"body"`
-		Run             string          `json:"run"`
-		Attempt         string          `json:"attempt"`
-		WatchInput      bool            `json:"watch_input"`
-		Headers         http.Header     `json:"headers"`
-		ExecutionConfig string          `json:"execution_config"`
-		Model           string          `json:"model"`
-		Stream          bool            `json:"stream"`
-		Alt             string          `json:"alt"`
-		SourceFormat    string          `json:"source_format"`
-		ResponseFormat  string          `json:"response_format"`
+		Path            string            `json:"path"`
+		Body            json.RawMessage   `json:"body"`
+		Run             string            `json:"run"`
+		Attempt         string            `json:"attempt"`
+		WatchInput      bool              `json:"watch_input"`
+		Headers         http.Header       `json:"headers"`
+		ExecutionConfig string            `json:"execution_config"`
+		Model           string            `json:"model"`
+		Stream          bool              `json:"stream"`
+		Alt             string            `json:"alt"`
+		SourceFormat    string            `json:"source_format"`
+		ResponseFormat  string            `json:"response_format"`
+		Provenance      map[string]string `json:"provenance"`
 	}
 	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
 		return err
@@ -1163,6 +1188,12 @@ func call() error {
 	request.Header.Set("X-Offline-Response-Format", input.ResponseFormat)
 	request.Header.Set("X-Offline-Run", input.Run)
 	request.Header.Set("X-Offline-Attempt", input.Attempt)
+	for _, name := range []string{"central_ingress", "broker_ingress", "broker_forward"} {
+		value := input.Provenance[name]
+		if decoded, e := hex.DecodeString(value); e == nil && len(decoded) == 32 {
+			request.Header.Set("X-Offline-Provenance-"+name, value)
+		}
+	}
 	inputHash := sha256.Sum256(input.Body)
 	result, err := transport.RoundTrip(request)
 	if err != nil {

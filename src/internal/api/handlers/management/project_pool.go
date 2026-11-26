@@ -295,6 +295,10 @@ func (e *projectExecutor) request(ctx context.Context, a *coreauth.Auth, r execu
 		req.Header.Set(util.ContainerConfigHeader, setting)
 	}
 	// These fields are generated here, never accepted from client headers.
+	if len(opts.OriginalRequest) > 0 {
+		sum := sha256.Sum256(opts.OriginalRequest)
+		req.Header.Set("X-Offline-Ingress-SHA256", hex.EncodeToString(sum[:]))
+	}
 	req.Header.Set("X-Offline-Source-Format", opts.SourceFormat.String())
 	req.Header.Set("X-Offline-Model", r.Model)
 	req.Header.Set("X-Offline-Alt", opts.Alt)
