@@ -34,6 +34,9 @@ def snapshot():
     for p in sample['projects']:
         if 'state' not in p:continue
         p['identity']={'email':p['slug']+'@example.invalid'};p['label']=p['identity']['email'];p['state']['subscription']={'subscription_type':'pro'};p['state']['account_observation']={'usage':{'values':{'five_hour':{'utilization':17,'resets_at':(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=2,minutes=14)).isoformat()},'seven_day':{'utilization':42,'resets_at':(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(days=3,hours=4)).isoformat()}},'observed_at':'2026-11-25T10:00:00Z'}}
+    if mode=='quota':
+        sample['projects']=[a,b]
+        a['state']['account_observation']={'usage':{'observed_at':'2026-11-26T06:00:00Z','values':{'five_hour':{'utilization':0},'seven_day':{'utilization':42},'limits':[{'kind':'weekly_scoped','percent':0,'is_active':False,'scope':{'model':{'display_name':'Fable'}}}]}}}
     return sample
 
 class Handler(http.server.BaseHTTPRequestHandler):

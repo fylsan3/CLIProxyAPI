@@ -1,16 +1,19 @@
-(function accountConsole(session, theme) {
+(function accountConsole(session, theme, router) {
   'use strict';
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui14';
+  host.dataset.uiRevision = 'accounts-ui16';
   const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
   syncStatusTheme();
   new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
   const root = host.attachShadow({mode:'open'});
   nativeDocument.body.prepend(host);
   const bridgeStyle = nativeDocument.createElement('style');
-  bridgeStyle.textContent = `html[data-account-console] .main-content > :not(#account-environments-app){display:none!important}
+  bridgeStyle.textContent = `#account-environments-app[hidden]{display:none!important}
+    .main-content{position:relative}
+    html[data-account-console] .main-content > :not(#account-environments-app){position:absolute!important;top:0;left:0;width:100%;visibility:hidden!important;pointer-events:none!important}
+    html[data-account-console] .main-content > :not(#account-environments-app) *{visibility:hidden!important;pointer-events:none!important}
     html[data-account-console] .main-content{animation:none!important}
     html[data-account-console] .nav-item.active:not(#account-console-nav){background:transparent;box-shadow:none;border-color:transparent}
     .sidebar a[href="#/auth-files"],.sidebar a[href="#/oauth"]{display:none!important}
@@ -85,14 +88,16 @@ const glassNavigation=(()=>{
     if (link) { event.preventDefault(); event.stopPropagation(); nativeDocument.querySelector('.sidebar-backdrop.visible')?.click(); navigate('/management.html'+link.getAttribute('href')); }
   }, true);
   let dispose = () => {}, revision = 0;
-  window.addEventListener('hashchange',()=>{if(['#/auth-files','#/oauth'].includes(location.hash.split('?')[0])){history.replaceState(null,'','/accounts.html#/');sync();}});
+  window.addEventListener('hashchange',()=>{if(['#/auth-files','#/oauth'].includes(location.hash.split('?')[0]))navigate('/accounts.html#/');});
   const isAccountPage = () => location.pathname === '/accounts.html';
   function navigate(url) {
-    history.pushState(null, '', url);
-    dispatchEvent(new PopStateEvent('popstate'));
+    const target = new URL(url, location.href);
+    // Let the native router retain its history index and unsaved-form blocker.
+    // Change the outer document path only after that navigation is committed.
+    return router.navigate(target.hash.slice(1) || '/', {state:{accountConsolePath:target.pathname+target.search}});
   }
   function sync() {
-    if(!isAccountPage()&&['#/auth-files','#/oauth'].includes(location.hash.split('?')[0]))history.replaceState(null,'','/accounts.html#/');
+    if(!isAccountPage()&&['#/auth-files','#/oauth'].includes(location.hash.split('?')[0])){navigate('/accounts.html#/');return;}
     revision++;
     dispose();
     dispose = () => {};
@@ -185,13 +190,19 @@ function accountQuotaWindows(state){
  const fables=limits.filter(x=>x?.kind==='weekly_scoped'&&/^fable( 5)?$/i.test(x.scope?.model?.display_name||''));
  const fable=fables.find(x=>x.is_active===true)||fables[0];
  const legacy=active?.values?.iguana_necktie;
- const fableValue=fable?{utilization:fable.percent,resets_at:fable.resets_at}:legacy&&!['limit_dollars','used_dollars','remaining_dollars'].some(k=>legacy[k]!==undefined)?legacy:undefined;
+ const fableValue=fable?{utilization:fable.percent,resets_at:fable.resets_at,is_active:fable.is_active}:legacy&&!['limit_dollars','used_dollars','remaining_dollars'].some(k=>legacy[k]!==undefined)?legacy:undefined;
  if(fableValue&&!definitions.some(x=>x[0]==='seven_day_oi'))definitions.push(['seven_day_oi','7d_oi','Fable 5 · 7 天']);
  return definitions.map(([key,short,label])=>{
   const value=key==='seven_day_oi'?(fableValue||active?.values?.[key]):active?.values?.[key],prefix='anthropic-ratelimit-unified-'+short+'-';
   const ratio=headers[prefix+'utilization'],n=ratio!==undefined&&String(ratio).trim()!==''?Number(ratio):NaN;
   const valid=Number.isFinite(n)&&n>=0&&n<=1;
-  if(value&&(!valid||!Number.isFinite(Date.parse(passive?.observed_at||''))||Date.parse(active.observed_at)>=Date.parse(passive?.observed_at||'')))return {label,percent:value.utilization,reset:value.resets_at,stamp:active.observed_at,source:'资料查询'};
+  const activeStamp=Date.parse(active?.observed_at||''),passiveStamp=Date.parse(passive?.observed_at||'');
+  // Missing/null/invalid values are not zero usage. Do not let an incomplete
+  // newer record erase a valid earlier observation.
+  const activeValid=Number.isFinite(value?.utilization)&&value.utilization>=0&&value.utilization<=100;
+  const activeNewer=Number.isFinite(activeStamp)&&(!Number.isFinite(passiveStamp)||activeStamp>=passiveStamp);
+  if(value?.is_active===false&&(!valid||activeNewer))return {label,active:false,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
+  if(activeValid&&(!valid||activeNewer))return {label,percent:value.utilization,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
   return {label,percent:valid?n*100:undefined,reset:/^[0-9]+$/.test(headers[prefix+'reset']||'')&&Number.isFinite(new Date(Number(headers[prefix+'reset'])*1000).getTime())?new Date(Number(headers[prefix+'reset'])*1000).toISOString():undefined,stamp:passive?.observed_at,source:'模型回复'};
  });
 }
@@ -209,12 +220,12 @@ function renderAccountQuota(parent,p,showDetails=false){
   const valid=Number.isFinite(item.percent)&&item.percent>=0&&item.percent<=100,remaining=valid?100-item.percent:undefined;
   const tone=stale?'quota-stale':valid&&remaining<30?'quota-danger':valid&&remaining<70?'quota-warning':'';
   const row=text(wrap,'div','','quota-window '+tone),heading=text(row,'div','','quota-heading'),label=text(heading,'span',item.label);
-  text(label,'span',' · '+quotaCountdown(item.reset),'quota-countdown');
-  text(heading,'strong',valid?(stale?'上次剩余 ':'剩余 ')+Number(remaining.toFixed(2))+'%':'未报告');
+  if(item.active!==false)text(label,'span',' · '+quotaCountdown(item.reset),'quota-countdown');
+  text(heading,'strong',item.active===false?'未启用':valid?(stale?'上次剩余 ':'剩余 ')+Number(remaining.toFixed(2))+'%':'未报告');
   if(item.reset&&Number.isFinite(Date.parse(item.reset)))row.title='上游所报重置时间：'+new Date(item.reset).toLocaleString();
-  const meter=text(row,'div','','quota-meter');
-  if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}
-  if(item.stamp){const key=item.source+' · '+new Date(item.stamp).toLocaleString();sources.set(key,[...(sources.get(key)||[]),item.label]);}
+  if(item.active===false)text(row,'p','上游标记此额度未启用；不作为可用额度。','help');
+  else {const meter=text(row,'div','','quota-meter');if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}}
+  if(item.stamp){const date=new Date(item.stamp),key=item.source+' · '+(Number.isFinite(date.getTime())?date.toLocaleString():'观测时间未知');sources.set(key,[...(sources.get(key)||[]),item.label]);}
  }
  if(showDetails)for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
  const observation=p.state?.account_observation;
@@ -576,10 +587,10 @@ accountForm.addEventListener('submit',async event=>{
   session.subscribe((next, before) => {
     if (next.isAuthenticated !== before.isAuthenticated || next.apiBase !== before.apiBase || next.managementKey !== before.managementKey) sync();
   });
-  let wasAccountPage = isAccountPage();
+  let accountLocation = isAccountPage() ? location.pathname + location.search : '';
   addEventListener('popstate', () => {
-    const now = isAccountPage();
-    if (wasAccountPage !== now) { wasAccountPage = now; sync(); }
+    const now = isAccountPage() ? location.pathname + location.search : '';
+    if (accountLocation !== now) { accountLocation = now; sync(); }
   });
   sync();
   // All container management views share the account snapshot. No provider credentials are copied.
@@ -587,20 +598,140 @@ accountForm.addEventListener('submit',async event=>{
  const names={'/':'仪表盘','/quota':'配额管理','/system':'模型信息'};
  const contextual={'/logs':'容器请求与回执','/config':'容器配置同步','/recommended-config':'容器运行配置','/ai-providers':'Claude 订阅账号'};
  const box=nativeDocument.createElement('div');box.id='container-management-linked';box.hidden=true;const view=box.attachShadow({mode:'open'});
- const css=nativeDocument.createElement('style');css.textContent='html[data-container-page] .main-content > :not(#container-management-linked){display:none!important}#container-management-linked{min-width:0}';nativeDocument.head.append(css);
+ const css=nativeDocument.createElement('style');css.textContent='html[data-container-page] .main-content > :not(#container-management-linked){position:absolute!important;top:0;left:0;width:100%;visibility:hidden!important;pointer-events:none!important}html[data-container-page] .main-content > :not(#container-management-linked) *{visibility:hidden!important;pointer-events:none!important}#container-management-linked{min-width:0}#container-management-linked[hidden]{display:none!important}';nativeDocument.head.append(css);
  let last='',abort=null,timer=null,known=false,busy=false,requestAccount='';
  const route=()=>location.hash.replace(/^#/,'').split('?')[0]||'/';
  const el=(parent,tag,value,cls)=>{const e=nativeDocument.createElement(tag);if(value!==undefined)e.textContent=String(value);if(cls)e.className=cls;parent.append(e);return e;};
+ const text=el;
+ /* Read-only presentation of the native CPA snapshot; no accounting or routing. */
+function quotaLines(observation) {
+ const entries=Object.entries(observation?.signals||{});
+ if(!observation?.reported||!entries.length)return ['上游尚未上报额度信息；本次 Token 统计不代表订阅剩余额度。'];
+ const headers=Object.fromEntries(entries.map(([k,v])=>[k.toLowerCase(),v]));
+ const stamp=new Date(observation.observed_at);
+ const lines=['最近观测：'+(Number.isFinite(stamp.getTime())?stamp.toLocaleString():'时间未知')+'；这是历史观测，并非实时余额。'];
+ for(const [window,label] of [['5h','5 小时窗口'],['7d','7 天窗口']]) {
+  const prefix='anthropic-ratelimit-unified-'+window+'-';
+  const raw=headers[prefix+'utilization'];
+  if(raw!==undefined) {
+   const ratio=Number(raw);
+   lines.push(label+'已用：'+(String(raw).trim()!==''&&Number.isFinite(ratio)&&ratio>=0&&ratio<=1?Number((ratio*100).toFixed(2))+'%':'未能解释（原值：'+raw+'）'));
+  }
+  const reset=headers[prefix+'reset'];
+  if(reset!==undefined){const date=new Date(Number(reset)*1000);lines.push(label+'重置时间：'+(/^[0-9]+$/.test(reset)&&Number.isFinite(date.getTime())?date.toLocaleString():'未能解释（原值：'+reset+'）'));}
+ }
+ lines.push('上游原始额度字段（仅展示，不据此修改派单）：');
+ for(const [name,value] of entries.sort(([a],[b])=>a.localeCompare(b)))lines.push(name+'：'+value);
+ return lines;
+}
+if(typeof module!=='undefined')module.exports={quotaLines};
+
+
+// Explicit reported subscription fields only; no inference from usage or token lifetime.
+function subscriptionLabel(state){
+ const p=state?.account_observation?.profile?.values||{},v={...(state?.subscription||{}),...p};
+ const raw=[v.subscription_type,v.plan_type,v.rate_limit_tier,v.organization_type].filter(Boolean).join(' · ');
+ // Official naming checked 2026-11-25: Max 20x migrated to Ultra; Max 5x is Max.
+ // Legacy upstream tier identifiers remain valid evidence; do not alter stored data or quota windows.
+ if(/\bultra\b|claude_ultra|max[_ -]?20x/i.test(raw))return 'Ultra';
+ if(/\bpro\b|claude_pro/i.test(raw))return 'Pro';if(/max/i.test(raw))return 'Max';
+ if(/\bfree\b|claude_free/i.test(raw))return 'Free';return raw||'档位未报告';
+}
+function accountQuotaWindows(state){
+ const active=state?.account_observation?.usage,passive=state?.quota_observation;
+ const headers=Object.fromEntries(Object.entries(passive?.signals||{}).map(([k,v])=>[k.toLowerCase(),v]));
+ const definitions=[['five_hour','5h','5 小时'],['seven_day','7d','7 天']];
+ for(const [key,short,label] of [['seven_day_opus','7d_opus','Opus · 7 天'],['seven_day_sonnet','7d_sonnet','Sonnet · 7 天'],['seven_day_oi','7d_oi','Fable 5 · 7 天']]) {
+  if(active?.values?.[key]||headers['anthropic-ratelimit-unified-'+short+'-utilization']!==undefined)definitions.push([key,short,label]);
+ }
+ const limits=Array.isArray(active?.values?.limits)?active.values.limits:[];
+ const fables=limits.filter(x=>x?.kind==='weekly_scoped'&&/^fable( 5)?$/i.test(x.scope?.model?.display_name||''));
+ const fable=fables.find(x=>x.is_active===true)||fables[0];
+ const legacy=active?.values?.iguana_necktie;
+ const fableValue=fable?{utilization:fable.percent,resets_at:fable.resets_at,is_active:fable.is_active}:legacy&&!['limit_dollars','used_dollars','remaining_dollars'].some(k=>legacy[k]!==undefined)?legacy:undefined;
+ if(fableValue&&!definitions.some(x=>x[0]==='seven_day_oi'))definitions.push(['seven_day_oi','7d_oi','Fable 5 · 7 天']);
+ return definitions.map(([key,short,label])=>{
+  const value=key==='seven_day_oi'?(fableValue||active?.values?.[key]):active?.values?.[key],prefix='anthropic-ratelimit-unified-'+short+'-';
+  const ratio=headers[prefix+'utilization'],n=ratio!==undefined&&String(ratio).trim()!==''?Number(ratio):NaN;
+  const valid=Number.isFinite(n)&&n>=0&&n<=1;
+  const activeStamp=Date.parse(active?.observed_at||''),passiveStamp=Date.parse(passive?.observed_at||'');
+  // Missing/null/invalid values are not zero usage. Do not let an incomplete
+  // newer record erase a valid earlier observation.
+  const activeValid=Number.isFinite(value?.utilization)&&value.utilization>=0&&value.utilization<=100;
+  const activeNewer=Number.isFinite(activeStamp)&&(!Number.isFinite(passiveStamp)||activeStamp>=passiveStamp);
+  if(value?.is_active===false&&(!valid||activeNewer))return {label,active:false,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
+  if(activeValid&&(!valid||activeNewer))return {label,percent:value.utilization,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
+  return {label,percent:valid?n*100:undefined,reset:/^[0-9]+$/.test(headers[prefix+'reset']||'')&&Number.isFinite(new Date(Number(headers[prefix+'reset'])*1000).getTime())?new Date(Number(headers[prefix+'reset'])*1000).toISOString():undefined,stamp:passive?.observed_at,source:'模型回复'};
+ });
+}
+function quotaCountdown(reset,now=Date.now()){
+ const end=Date.parse(reset||'');if(!Number.isFinite(end))return '重置时间未报告';
+ const minutes=Math.ceil((end-now)/60000);if(minutes<=0)return '已到重置时间，待更新';
+ const days=Math.floor(minutes/1440),hours=Math.floor(minutes%1440/60),mins=minutes%60;
+ return days?'距重置 '+days+'天 '+hours+'小时':hours?'距重置 '+hours+'小时 '+mins+'分钟':'距重置 '+mins+'分钟';
+}
+function renderAccountQuota(parent,p,showDetails=false){
+ const wrap=text(parent,'section','','account-quota');wrap.setAttribute('aria-label','订阅额度');
+ const sources=new Map();
+ for(const item of accountQuotaWindows(p.state)){
+  const stale=Number.isFinite(Date.parse(item.reset||''))&&Date.parse(item.reset)<=Date.now();
+  const valid=Number.isFinite(item.percent)&&item.percent>=0&&item.percent<=100,remaining=valid?100-item.percent:undefined;
+  const tone=stale?'quota-stale':valid&&remaining<30?'quota-danger':valid&&remaining<70?'quota-warning':'';
+  const row=text(wrap,'div','','quota-window '+tone),heading=text(row,'div','','quota-heading'),label=text(heading,'span',item.label);
+  if(item.active!==false)text(label,'span',' · '+quotaCountdown(item.reset),'quota-countdown');
+  text(heading,'strong',item.active===false?'未启用':valid?(stale?'上次剩余 ':'剩余 ')+Number(remaining.toFixed(2))+'%':'未报告');
+  if(item.reset&&Number.isFinite(Date.parse(item.reset)))row.title='上游所报重置时间：'+new Date(item.reset).toLocaleString();
+  if(item.active===false)text(row,'p','上游标记此额度未启用；不作为可用额度。','help');
+  else {const meter=text(row,'div','','quota-meter');if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}}
+  if(item.stamp){const date=new Date(item.stamp),key=item.source+' · '+(Number.isFinite(date.getTime())?date.toLocaleString():'观测时间未知');sources.set(key,[...(sources.get(key)||[]),item.label]);}
+ }
+ if(showDetails)for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
+ const observation=p.state?.account_observation;
+ for(const [key,label] of [['profile','档位'],['usage','额度']])if(observation?.[key]?.error)text(wrap,'p',label+'查询失败；'+(observation[key].observed_at?'显示上次成功结果。':'尚无结果。'),'status-bad');
+ const capture=observation?.capture;
+ if(showDetails&&capture)text(wrap,'p',capture.state==='complete'?'本次完整 HTTP 样本已加密保存 · '+capture.id:'本次 HTTP 样本未完整保存，不能用于完整重放。',capture.state==='complete'?'help':'status-bad');
+ if(showDetails)text(wrap,'p','上次观测结果；到重置时间后需更新确认。','help');
+}
+
+function resetGrantSummary(state,now=Date.now()){
+ const observation=state?.account_observation?.usage,block=observation?.values?.cedar_ember;
+ if(!block)return {reported:false,error:observation?.error};
+ const grants=Array.isArray(block.grants)?block.grants:[];
+ let left=0,known=true,usable=0;
+ for(const g of grants){
+  if(!Number.isInteger(g.resets_left)||g.resets_left<0){known=false;continue;}
+  const expired=g.ends_at&&Date.parse(g.ends_at)<=now;
+  if(!expired)left+=g.resets_left;
+  if(!expired&&block.eligible===true&&g.usable_now===true&&g.paused===false&&g.resets_left>0&&(!g.starts_at||Date.parse(g.starts_at)<=now)&&(!block.cooldown_until||Date.parse(block.cooldown_until)<=now)&&(g.use_requires_limit===false||block.at_limit===true))usable+=g.resets_left;
+ }
+ return {reported:true,left:known?left:undefined,usable,grants,stamp:observation.observed_at,error:observation.error};
+}
+function renderResetGrants(parent,p,showDetails=false){
+ const view=resetGrantSummary(p.state);
+ if(!view.reported||!(view.left>0))return;
+ const section=text(parent,'section','','account-quota reset-grants');
+ section.setAttribute('aria-label','重置卡');text(section,'strong','重置卡');
+ if(!view.reported){text(section,'p','尚未报告；点击「刷新用量」读取。','help');return;}
+ text(section,'p','剩余 '+(view.left===undefined?'未报告':view.left)+' 次 · 上次报告可用 '+view.usable+' 次');
+ if(!showDetails)return;
+ for(const g of view.grants)if(g.ends_at)text(section,'p','有效期至 '+new Date(g.ends_at).toLocaleString(),'help');
+ if(view.error)text(section,'p','本次读取失败，保留上次结果。','status-bad');
+ text(section,'p','目前仅展示，消耗入口尚未开放；刷新用量不会使用重置卡。','help');
+}
+
  function link(parent,label,slug){const a=el(parent,'a',label,'button-link secondary');a.href='/accounts.html'+(slug?'?account='+encodeURIComponent(slug):'')+'#/';a.onclick=e=>{if(e.button||e.metaKey||e.ctrlKey||e.shiftKey)return;e.preventDefault();navigate(a.href);};return a;}
  function status(p){if(p.overall_ready)return '可接单';if(p.container_ready&&p.central_dispatch?.eligible!==true)return ({cooldown:'调度冷却中',disabled:'调度已停用',unavailable:'调度暂不可用',unknown:'调度状态未知'})[p.central_dispatch?.reason]||'调度暂不可用';return ({account_maintenance:'重启检查中',account_proxy_unavailable:'账号代理或出口检查失败',proxy_unavailable:'代理不可用',proxy_check_failed:'代理检查失败',container_stopped:'容器已停止',worker_unavailable:'执行器不可用',network_status_unknown:'网络状态未知',binding_check_failed:'环境绑定检查失败'})[p.reason]||(p.state?.authorized?'暂不可接单':'需要处理授权');}
  function section(parent,title){const s=el(parent,'section',undefined,'linked-section');el(s,'h2',title);return s;}
  function table(parent,headers,rows){const wrap=el(parent,'div',undefined,'linked-table-wrap'),t=el(wrap,'table'),head=el(t,'thead'),tr=el(head,'tr');headers.forEach(h=>el(tr,'th',h));const body=el(t,'tbody');for(const row of rows){const tr=el(body,'tr');row.forEach(v=>{const td=el(tr,'td');if(typeof v==='function')v(td);else td.textContent=v??'未报告';});}if(!rows.length)el(parent,'p','暂无记录。','help');}
  function render(data,path){
   updateContainerNavigation(data);
-  view.replaceChildren();const style=el(view,'style');style.textContent=`:host{display:block;color:var(--text-primary,#222);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*{box-sizing:border-box}main{max-width:1200px;margin:0 auto;padding:10px 0 28px}h1{font-size:28px;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0;max-width:75ch}.help{color:var(--text-secondary,#555)}.linked-section{margin-top:28px}.linked-summary{display:flex;flex-wrap:wrap;gap:12px 28px;padding:18px 0;border-bottom:1px solid var(--border-color,#ddd)}.linked-summary strong{font-size:24px;font-variant-numeric:tabular-nums;margin-left:10px}.linked-table-wrap{max-width:100%;overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px 14px;border-bottom:1px solid var(--border-color,#ddd);vertical-align:top;overflow-wrap:anywhere;max-width:420px}th{font-weight:600;color:var(--text-secondary,#555)}a,button{color:var(--text-primary,#222);border:1px solid var(--border-color,#bbb);border-radius:8px;padding:9px 13px;display:inline-block;background:var(--bg-secondary,#fff);text-decoration:none;font:inherit;cursor:pointer}a:hover,button:hover{background:var(--bg-tertiary,#eee)}a:focus-visible,button:focus-visible{outline:2px solid var(--text-primary,#222);outline-offset:3px}.ok{color:var(--success-color,#177044)}.bad{color:var(--danger-color,#b42318)}.linked-actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}.linked-notice{padding:14px 0;border-bottom:1px solid var(--border-color,#ddd)}@media(max-width:600px){h1{font-size:24px}th,td{padding:10px 8px;min-width:85px}.linked-summary{gap:10px 18px}}`;
-  const main=el(view,'main'),projects=data.projects||[],summary=data.summary||{},config=data.scheduler_config||{};
-  el(main,'h1',names[path]||contextual[path]);el(main,'p','账号独立容器 · 与「账号管理」使用同一份状态','help');
-  const actions=el(main,'div',undefined,'linked-actions');link(actions,'管理账号与容器');const reload=el(actions,'button','刷新状态');reload.onclick=()=>poll(path);
+  const openDetails=new Set([...view.querySelectorAll('details[open][data-detail-key]')].map(e=>e.dataset.detailKey));
+  const expanded=view.querySelector('details')?.open,focused=view.activeElement?.getAttribute('data-focus-key');
+  view.replaceChildren();const style=el(view,'style');style.textContent=`:host{display:block;color:var(--text-primary,#222);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}:host([hidden]){display:none!important}*{box-sizing:border-box}main{max-width:1200px;margin:0 auto;padding:10px 0 28px}h1{font-size:28px;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0;max-width:75ch}.help{color:var(--text-secondary,#555)}.linked-section{margin-top:28px}.linked-summary{display:flex;flex-wrap:wrap;gap:12px 28px;padding:18px 0;border-bottom:1px solid var(--border-color,#ddd)}.linked-summary strong{font-size:24px;font-variant-numeric:tabular-nums;margin-left:10px}.linked-table-wrap{max-width:100%;overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:12px 14px;border-bottom:1px solid var(--border-color,#ddd);vertical-align:top;overflow-wrap:anywhere;max-width:420px}th{font-weight:600;color:var(--text-secondary,#555)}a,button{color:var(--text-primary,#222);border:1px solid var(--border-color,#bbb);border-radius:8px;padding:9px 13px;display:inline-block;background:var(--bg-secondary,#fff);text-decoration:none;font:inherit;cursor:pointer}a:hover,button:hover{background:var(--bg-tertiary,#eee)}a:focus-visible,button:focus-visible,summary:focus-visible,select:focus-visible{outline:2px solid var(--text-primary,#222);outline-offset:3px}.ok{color:var(--success-color,#177044)}.bad,.status-bad{color:var(--error-color,#b42318)}.linked-actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}.linked-notice{padding:14px 0;border-bottom:1px solid var(--border-color,#ddd)}details{border-top:1px solid var(--border-color,#ddd);margin:24px 0;padding-top:16px}summary{cursor:pointer;font-weight:600}.account-quota{display:grid;gap:16px;max-width:560px;margin:16px 0}.quota-heading{display:flex;justify-content:space-between;gap:12px}.quota-heading strong{white-space:nowrap}.quota-countdown{font-size:12px;color:var(--text-secondary,#555)}.quota-meter{height:6px;border-radius:3px;background:var(--bg-tertiary,#ddd);overflow:hidden;margin-top:8px}.quota-meter span{display:block;height:100%;background:var(--success-color,#177044)}.quota-stale .quota-meter span{background:var(--text-secondary,#777)}.quota-warning .quota-meter span{background:#b77912}.quota-danger .quota-meter span{background:var(--error-color,#b42318)}.quota-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),460px));gap:20px;margin-top:24px}.quota-card{border:1px solid var(--border-color,#ddd);border-radius:16px;padding:20px;background:var(--bg-secondary,#fff);min-width:0}.quota-card h2{overflow-wrap:anywhere}.quota-card details{margin:20px 0}.quota-card a{padding:5px 10px;font-size:12px}.quota-card p{overflow-wrap:anywhere}@media(max-width:600px){h1{font-size:24px}th,td{padding:10px 8px;min-width:85px}.linked-summary{gap:10px 18px}}`;
+  const shell=el(view,names[path]?'main':'details'),main=names[path]?shell:el(shell,'div'),projects=data.projects||[],summary=data.summary||{},config=data.scheduler_config||{};
+  if(names[path])el(main,'h1',names[path]);else{shell.open=!!expanded;const caption=nativeDocument.createElement('summary');caption.textContent=contextual[path];caption.dataset.focusKey='context';shell.prepend(caption);}
+  el(main,'p','账号独立容器 · 与「账号管理」使用同一份状态','help');
+  const actions=el(main,'div',undefined,'linked-actions');link(actions,'管理账号与容器');const reload=el(actions,'button',path==='/quota'?'更新本地显示':'刷新状态');reload.dataset.focusKey='refresh';reload.onclick=()=>poll(path);
   const stats=el(main,'div',undefined,'linked-summary');for(const [name,value] of [['账号',projects.length],['可接单',projects.filter(p=>p.overall_ready).length],['在途请求',data.scheduler_in_flight??'未知']]){const item=el(stats,'span',name);el(item,'strong',value);}
   if(data.central_status_available===false)el(main,'p','中央调度状态暂时无法确认；当前不显示旧配置，也不把未知的在途请求当作零。','bad');
   const accountRows=()=>projects.map(p=>[p.label||p.slug,p.slug,td=>el(td,'span',status(p),p.overall_ready?'ok':'bad'),p.container?.slice(0,12)||'未创建',p.last_success_at?new Date(p.last_success_at*1000).toLocaleString():'尚无成功调用',td=>link(td,'查看账号',p.slug)]);
@@ -618,26 +749,51 @@ accountForm.addEventListener('submit',async event=>{
   if(path==='/'||path==='/logs'){
    const live=section(main,'各账号执行状态');table(live,['账号','容器内活动请求','当前状态'],projects.map(p=>[td=>link(td,p.label||p.slug,p.slug),p.state?.active_calls??'未知',td=>el(td,'span',status(p),p.overall_ready?'ok':'bad')]));el(live,'p','在途请求由中央调度器统计；容器活动请求为执行器当前值，等待派发或重试时两者可能短暂不同。','help');
    const s=section(main,'请求与容器回执');el(s,'p',`累计请求 ${summary.requests??'未报告'} · 执行尝试 ${summary.attempts??'未报告'} · 成功尝试 ${summary.successful_attempts??'未报告'} · 失败尝试 ${summary.failed_attempts??'未报告'}`);
-   const filter=el(s,'label','按账号查看：'),select=el(filter,'select');select.setAttribute('aria-label','按账号筛选请求');el(select,'option','全部账号').value='';for(const p of projects)el(select,'option',p.label||p.slug).value=p.slug;
+   const filter=el(s,'label','按账号查看：'),select=el(filter,'select');select.setAttribute('aria-label','按账号筛选请求');select.dataset.focusKey='account-filter';el(select,'option','全部账号').value='';for(const p of projects)el(select,'option',p.label||p.slug).value=p.slug;
    if(!projects.some(p=>p.slug===requestAccount))requestAccount='';select.value=requestAccount;select.onchange=()=>{requestAccount=select.value;render(data,path);};
    const rows=[];for(const r of data.requests||[])for(const a of r.attempts||[]){const slug=a.owner?.toLowerCase();if(requestAccount&&slug!==requestAccount)continue;const p=projects.find(p=>p.slug===slug);rows.push([r.run,a.id,td=>p?link(td,p.label||p.slug,p.slug):el(td,'span',a.owner),a.container?.slice(0,12)||'未派入',a.state,a.status??'—',a.response?.slice(0,16)||'未收到完整回执']);}
    table(s,['请求编号','尝试编号','账号','容器','状态','HTTP','回复摘要'],rows);el(s,'p','在最近 20 个请求中筛选；同一请求的重试保留各次尝试编号，点击账号可查看其用量和运行状态。失败与未完成回复不计入已确认用量。'+(path==='/logs'?'下方原生日志仍是中央运行日志。':''),'help');
   }
-  if(path==='/quota'||path==='/'){
-   const s=section(main,'用量与上游额度');table(s,['账号','已确认输入 Token','已确认输出 Token','成功完整记录','上游额度'],projects.map(p=>[td=>link(td,p.label||p.slug,p.slug),p.usage?.totals?.input_tokens??'未报告',p.usage?.totals?.output_tokens??'未报告',p.usage?.attempt_counts?.confirmed??0,p.state?.quota_observation?.reported?'已收到历史观测':'未报告']));
+  if(path==='/'){
+   const s=section(main,'用量与上游额度');table(s,['账号','已确认输入 Token','已确认输出 Token','成功完整记录','上游额度'],projects.map(p=>[td=>link(td,p.label||p.slug,p.slug),p.usage?.totals?.input_tokens??'未报告',p.usage?.totals?.output_tokens??'未报告',p.usage?.attempt_counts?.confirmed??0,(p.state?.quota_observation?.reported||p.state?.account_observation?.usage?.observed_at)?'已收到历史观测':'未报告']));
    el(s,'p','Token 统计来自完整模型回复，不代表订阅剩余额度。不主动查询上游。','help');
-   if(path==='/quota')for(const p of projects){const q=section(main,p.label||p.slug);const observation=p.state?.quota_observation;if(observation?.reported){el(q,'p','观测时间：'+observation.observed_at);for(const [k,v] of Object.entries(observation.signals||{}))el(q,'p',k+'：'+v);}else el(q,'p','上游尚未报告额度。');}
+  }
+  if(path==='/quota'){
+   el(main,'p','显示最近收到的额度；自动读取本地记录，不主动查询上游。需要重新查询额度，请进入账号管理使用「刷新用量」。','help');
+   const grid=el(main,'div',undefined,'quota-grid');
+   if(!projects.length)el(grid,'p','暂无订阅账号。','help');
+   for(const p of projects){
+    const q=el(grid,'section',undefined,'quota-card');el(q,'p','Claude 订阅号 · '+subscriptionLabel(p.state),'help');el(q,'h2',p.label||p.slug);el(q,'span',status(p),p.overall_ready?'ok':'bad');
+    renderAccountQuota(q,p);renderResetGrants(q,p);
+    const detail=el(q,'details');detail.dataset.detailKey=p.slug;detail.open=openDetails.has(p.slug);el(detail,'summary','观测来源与 Token 统计');
+    for(const item of accountQuotaWindows(p.state)){const stamp=new Date(item.stamp);el(detail,'p',item.label+' · '+item.source+' · '+(Number.isFinite(stamp.getTime())?stamp.toLocaleString():'尚无观测时间'),'help');}
+    el(detail,'p','已确认输入 Token：'+(p.usage?.totals?.input_tokens??'未报告')+' · 输出：'+(p.usage?.totals?.output_tokens??'未报告')+' · 完整记录：'+(p.usage?.attempt_counts?.confirmed??0));
+    el(detail,'p','Token 统计不代表订阅剩余额度；到重置时间后需等待新观测确认。','help');
+    const capture=p.state?.account_observation?.capture;if(capture)el(detail,'p',capture.state==='complete'?'完整 HTTP 样本已加密保存 · '+capture.id:'HTTP 样本未完整保存，不能用于完整重放。',capture.state==='complete'?'help':'bad');
+    link(q,'查看账号',p.slug);
+   }
   }
   if(path==='/system'){
    const s=section(main,'模型与账号绑定');const models=new Map();for(const p of projects)for(const m of p.models||[]){if(!models.has(m))models.set(m,[]);models.get(m).push(p);}
-   table(s,['模型','绑定账号','本地可接单账号数'],[...models].map(([m,ps])=>[m,ps.map(p=>p.label||p.slug).join('、'),ps.filter(p=>p.overall_ready).length]));el(s,'p','模型来自本地注册清单，不是账号权益探测。容器入口已接入 /v1/messages 与 /v1/messages/count_tokens；其他协议仍需独立适配和验收。','help');
+   table(s,['模型','绑定账号','本地可接单账号数'],[...models].map(([m,ps])=>[m,ps.map(p=>p.label||p.slug).join('、'),ps.filter(p=>p.overall_ready).length]));el(s,'p','模型来自本地注册清单，不代表账号已经验证可调用。此页只读取已保存的状态，不主动探测上游。','help');
   }
   if(path==='/ai-providers')el(main,'p','订阅账号由独立容器管理，不计入下方原生供应商 API Key 数量。');
-  el(main,'p','运行版本：'+(data.release?.candidate||'未知')+' · 管理界面 accounts-ui14 · 更新于 '+new Date().toLocaleTimeString(),'help');
+  el(main,'p','运行版本：'+(data.release?.candidate||'未知')+' · 管理界面 accounts-ui16 · 更新于 '+new Date().toLocaleTimeString(),'help');
+  if(focused)[...view.querySelectorAll('[data-focus-key]')].find(e=>e.dataset.focusKey===focused)?.focus({preventScroll:true});
  }
- function reconcile(){const state=session.getState(),path=route(),key=state.isAuthenticated&&!isAccountPage()&&(names[path]||contextual[path])?path:'';const parent=nativeDocument.querySelector('.main-content');if(parent&&box.parentElement!==parent)parent.prepend(box);if(last===key)return;last=key;abort?.abort();clearInterval(timer);busy=false;box.hidden=true;nativeDocument.documentElement.removeAttribute('data-container-page');if(!key)return;abort=new AbortController();poll(key);timer=window.setInterval(()=>{if(!nativeDocument.hidden)poll(key);},5000);}
- async function poll(path){if(busy||path!==last)return;busy=true;const signal=abort.signal;try{const s=session.getState();if(new URL(s.apiBase).origin!==location.origin)return;const r=await window.fetch('/v8/management/account-environments/snapshot',{headers:{Authorization:'Bearer '+s.managementKey},credentials:'omit',cache:'no-store',redirect:'error',signal});if(!r.ok)throw Error('容器状态读取失败，请稍后刷新。');const d=await r.json();if(signal.aborted||path!==last)return;if(!d.runtime_mode)return;known=true;box.hidden=false;nativeDocument.documentElement.toggleAttribute('data-container-page',!!names[path]);render(d,path);}catch(e){if(signal.aborted)return;if(known){box.hidden=false;view.replaceChildren();el(view,'p','无法读取容器数据，未显示过期状态。请刷新或重新登录。');nativeDocument.documentElement.toggleAttribute('data-container-page',!!names[path]);}}finally{if(!signal.aborted)busy=false;}}
- new MutationObserver(reconcile).observe(nativeDocument.getElementById('root'),{childList:true,subtree:true});window.addEventListener('hashchange',reconcile);window.addEventListener('popstate',reconcile);session.subscribe(()=>{last='';reconcile();});reconcile();
+ function reconcile(){const state=session.getState(),path=route(),key=state.isAuthenticated&&!isAccountPage()&&(names[path]||contextual[path])?path:'';const parent=nativeDocument.querySelector('.main-content');if(parent&&box.parentElement!==parent)parent.append(box);if(last===key)return;last=key;abort?.abort();clearInterval(timer);busy=false;box.hidden=true;view.replaceChildren();nativeDocument.documentElement.removeAttribute('data-container-page');if(!state.isAuthenticated)known=false;if(!key)return;abort=new AbortController();poll(key);timer=window.setInterval(()=>{if(!nativeDocument.hidden&&!view.activeElement?.matches('input,select,textarea'))poll(key);},5000);}
+ async function poll(path){if(busy||path!==last)return;busy=true;const signal=abort.signal;try{const s=session.getState();if(new URL(s.apiBase).origin!==location.origin)return;const r=await window.fetch('/v8/management/account-environments/snapshot',{headers:{Authorization:'Bearer '+s.managementKey},credentials:'omit',cache:'no-store',redirect:'error',signal});if(r.status===401||r.status===403){session.getState().logout();return;}if(!r.ok)throw Error('容器状态读取失败，请稍后刷新。');const d=await r.json();if(signal.aborted||path!==last)return;if(!d.runtime_mode){known=false;box.hidden=true;view.replaceChildren();nativeDocument.documentElement.removeAttribute('data-container-page');return;}known=true;box.hidden=false;nativeDocument.documentElement.toggleAttribute('data-container-page',!!names[path]);render(d,path);}catch(e){if(signal.aborted||path!==last)return;box.hidden=false;view.replaceChildren();const p=el(view,'p','无法读取容器状态，请重试；未显示过期的账号数据。');p.setAttribute('role','alert');const retry=el(view,'button','重试读取状态');retry.onclick=()=>poll(path);nativeDocument.documentElement.toggleAttribute('data-container-page',known&&!!names[path]);}finally{if(!signal.aborted)busy=false;}}
+ new MutationObserver(reconcile).observe(nativeDocument.getElementById('root'),{childList:true,subtree:true});window.addEventListener('hashchange',reconcile);window.addEventListener('popstate',reconcile);window.addEventListener('cpa:navigation',reconcile);session.subscribe(()=>{last='';reconcile();});reconcile();
 })();
 
-})(dh, Zc);
+  let committedLocation = router.state.location.key;
+  router.subscribe(state => {
+    if(state.navigation.state!=='idle'||state.location.key===committedLocation)return;
+    committedLocation=state.location.key;
+    const outer=state.location.state?.accountConsolePath;
+    if(typeof outer==='string'&&/^\/(accounts|management)\.html(?:\?[^#]*)?$/.test(outer))history.replaceState(history.state,'',outer+location.hash);
+    const now=isAccountPage()?location.pathname+location.search:'';
+    if(now!==accountLocation){accountLocation=now;sync();}else mountNavigation();
+    dispatchEvent(new Event('cpa:navigation'));
+  });
+})(dh, Zc, Fde);

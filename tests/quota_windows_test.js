@@ -26,3 +26,15 @@ for(const [values,label] of [
  [{subscription_type:'pro'},'Pro'],[{},'档位未报告']
 ])assert.equal(context.subscriptionLabel({account_observation:{profile:{values}}}),label);
 console.log('current official and legacy subscription names passed');
+
+const inactive={account_observation:{usage:{observed_at:'2026-11-26T06:00:00Z',values:{limits:[{kind:'weekly_scoped',percent:0,is_active:false,scope:{model:{display_name:'Fable'}}}]}}}};
+let disabled=context.accountQuotaWindows(inactive).find(x=>x.label.includes('Fable'));
+assert.equal(disabled.active,false);assert.equal(disabled.percent,undefined);
+inactive.quota_observation={observed_at:'2026-11-26T08:00:00Z',signals:{'Anthropic-Ratelimit-Unified-7d_oi-Utilization':'.25'}};
+assert.equal(context.accountQuotaWindows(inactive).find(x=>x.label.includes('Fable')).percent,25);
+const incomplete={account_observation:{usage:{observed_at:'2026-11-26T09:00:00Z',values:{five_hour:{utilization:null}}}},quota_observation:{observed_at:'2026-11-26T08:00:00Z',signals:{'Anthropic-Ratelimit-Unified-5h-Utilization':'.3'}}};
+assert.equal(context.accountQuotaWindows(incomplete)[0].percent,30);
+for(const value of [null,undefined,-1,101,'']){incomplete.account_observation.usage.values.five_hour.utilization=value;assert.equal(context.accountQuotaWindows(incomplete)[0].percent,30);}
+incomplete.account_observation.usage.values.five_hour.utilization=0;
+assert.equal(context.accountQuotaWindows(incomplete)[0].percent,0);
+console.log('inactive quota, invalid values and newer valid observations passed');

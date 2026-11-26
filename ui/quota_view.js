@@ -43,13 +43,19 @@ function accountQuotaWindows(state){
  const fables=limits.filter(x=>x?.kind==='weekly_scoped'&&/^fable( 5)?$/i.test(x.scope?.model?.display_name||''));
  const fable=fables.find(x=>x.is_active===true)||fables[0];
  const legacy=active?.values?.iguana_necktie;
- const fableValue=fable?{utilization:fable.percent,resets_at:fable.resets_at}:legacy&&!['limit_dollars','used_dollars','remaining_dollars'].some(k=>legacy[k]!==undefined)?legacy:undefined;
+ const fableValue=fable?{utilization:fable.percent,resets_at:fable.resets_at,is_active:fable.is_active}:legacy&&!['limit_dollars','used_dollars','remaining_dollars'].some(k=>legacy[k]!==undefined)?legacy:undefined;
  if(fableValue&&!definitions.some(x=>x[0]==='seven_day_oi'))definitions.push(['seven_day_oi','7d_oi','Fable 5 · 7 天']);
  return definitions.map(([key,short,label])=>{
   const value=key==='seven_day_oi'?(fableValue||active?.values?.[key]):active?.values?.[key],prefix='anthropic-ratelimit-unified-'+short+'-';
   const ratio=headers[prefix+'utilization'],n=ratio!==undefined&&String(ratio).trim()!==''?Number(ratio):NaN;
   const valid=Number.isFinite(n)&&n>=0&&n<=1;
-  if(value&&(!valid||!Number.isFinite(Date.parse(passive?.observed_at||''))||Date.parse(active.observed_at)>=Date.parse(passive?.observed_at||'')))return {label,percent:value.utilization,reset:value.resets_at,stamp:active.observed_at,source:'资料查询'};
+  const activeStamp=Date.parse(active?.observed_at||''),passiveStamp=Date.parse(passive?.observed_at||'');
+  // Missing/null/invalid values are not zero usage. Do not let an incomplete
+  // newer record erase a valid earlier observation.
+  const activeValid=Number.isFinite(value?.utilization)&&value.utilization>=0&&value.utilization<=100;
+  const activeNewer=Number.isFinite(activeStamp)&&(!Number.isFinite(passiveStamp)||activeStamp>=passiveStamp);
+  if(value?.is_active===false&&(!valid||activeNewer))return {label,active:false,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
+  if(activeValid&&(!valid||activeNewer))return {label,percent:value.utilization,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
   return {label,percent:valid?n*100:undefined,reset:/^[0-9]+$/.test(headers[prefix+'reset']||'')&&Number.isFinite(new Date(Number(headers[prefix+'reset'])*1000).getTime())?new Date(Number(headers[prefix+'reset'])*1000).toISOString():undefined,stamp:passive?.observed_at,source:'模型回复'};
  });
 }
@@ -67,12 +73,12 @@ function renderAccountQuota(parent,p,showDetails=false){
   const valid=Number.isFinite(item.percent)&&item.percent>=0&&item.percent<=100,remaining=valid?100-item.percent:undefined;
   const tone=stale?'quota-stale':valid&&remaining<30?'quota-danger':valid&&remaining<70?'quota-warning':'';
   const row=text(wrap,'div','','quota-window '+tone),heading=text(row,'div','','quota-heading'),label=text(heading,'span',item.label);
-  text(label,'span',' · '+quotaCountdown(item.reset),'quota-countdown');
-  text(heading,'strong',valid?(stale?'上次剩余 ':'剩余 ')+Number(remaining.toFixed(2))+'%':'未报告');
+  if(item.active!==false)text(label,'span',' · '+quotaCountdown(item.reset),'quota-countdown');
+  text(heading,'strong',item.active===false?'未启用':valid?(stale?'上次剩余 ':'剩余 ')+Number(remaining.toFixed(2))+'%':'未报告');
   if(item.reset&&Number.isFinite(Date.parse(item.reset)))row.title='上游所报重置时间：'+new Date(item.reset).toLocaleString();
-  const meter=text(row,'div','','quota-meter');
-  if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}
-  if(item.stamp){const key=item.source+' · '+new Date(item.stamp).toLocaleString();sources.set(key,[...(sources.get(key)||[]),item.label]);}
+  if(item.active===false)text(row,'p','上游标记此额度未启用；不作为可用额度。','help');
+  else {const meter=text(row,'div','','quota-meter');if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}}
+  if(item.stamp){const date=new Date(item.stamp),key=item.source+' · '+(Number.isFinite(date.getTime())?date.toLocaleString():'观测时间未知');sources.set(key,[...(sources.get(key)||[]),item.label]);}
  }
  if(showDetails)for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
  const observation=p.state?.account_observation;

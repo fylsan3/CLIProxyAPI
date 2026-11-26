@@ -1,16 +1,19 @@
-(function accountConsole(session, theme) {
+(function accountConsole(session, theme, router) {
   'use strict';
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui14';
+  host.dataset.uiRevision = 'accounts-ui16';
   const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
   syncStatusTheme();
   new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
   const root = host.attachShadow({mode:'open'});
   nativeDocument.body.prepend(host);
   const bridgeStyle = nativeDocument.createElement('style');
-  bridgeStyle.textContent = `html[data-account-console] .main-content > :not(#account-environments-app){display:none!important}
+  bridgeStyle.textContent = `#account-environments-app[hidden]{display:none!important}
+    .main-content{position:relative}
+    html[data-account-console] .main-content > :not(#account-environments-app){position:absolute!important;top:0;left:0;width:100%;visibility:hidden!important;pointer-events:none!important}
+    html[data-account-console] .main-content > :not(#account-environments-app) *{visibility:hidden!important;pointer-events:none!important}
     html[data-account-console] .main-content{animation:none!important}
     html[data-account-console] .nav-item.active:not(#account-console-nav){background:transparent;box-shadow:none;border-color:transparent}
     .sidebar a[href="#/auth-files"],.sidebar a[href="#/oauth"]{display:none!important}
@@ -58,14 +61,16 @@
     if (link) { event.preventDefault(); event.stopPropagation(); nativeDocument.querySelector('.sidebar-backdrop.visible')?.click(); navigate('/management.html'+link.getAttribute('href')); }
   }, true);
   let dispose = () => {}, revision = 0;
-  window.addEventListener('hashchange',()=>{if(['#/auth-files','#/oauth'].includes(location.hash.split('?')[0])){history.replaceState(null,'','/accounts.html#/');sync();}});
+  window.addEventListener('hashchange',()=>{if(['#/auth-files','#/oauth'].includes(location.hash.split('?')[0]))navigate('/accounts.html#/');});
   const isAccountPage = () => location.pathname === '/accounts.html';
   function navigate(url) {
-    history.pushState(null, '', url);
-    dispatchEvent(new PopStateEvent('popstate'));
+    const target = new URL(url, location.href);
+    // Let the native router retain its history index and unsaved-form blocker.
+    // Change the outer document path only after that navigation is committed.
+    return router.navigate(target.hash.slice(1) || '/', {state:{accountConsolePath:target.pathname+target.search}});
   }
   function sync() {
-    if(!isAccountPage()&&['#/auth-files','#/oauth'].includes(location.hash.split('?')[0]))history.replaceState(null,'','/accounts.html#/');
+    if(!isAccountPage()&&['#/auth-files','#/oauth'].includes(location.hash.split('?')[0])){navigate('/accounts.html#/');return;}
     revision++;
     dispose();
     dispose = () => {};
@@ -121,11 +126,21 @@
   session.subscribe((next, before) => {
     if (next.isAuthenticated !== before.isAuthenticated || next.apiBase !== before.apiBase || next.managementKey !== before.managementKey) sync();
   });
-  let wasAccountPage = isAccountPage();
+  let accountLocation = isAccountPage() ? location.pathname + location.search : '';
   addEventListener('popstate', () => {
-    const now = isAccountPage();
-    if (wasAccountPage !== now) { wasAccountPage = now; sync(); }
+    const now = isAccountPage() ? location.pathname + location.search : '';
+    if (accountLocation !== now) { accountLocation = now; sync(); }
   });
   sync();
   __LINKED__
-})(dh, Zc);
+  let committedLocation = router.state.location.key;
+  router.subscribe(state => {
+    if(state.navigation.state!=='idle'||state.location.key===committedLocation)return;
+    committedLocation=state.location.key;
+    const outer=state.location.state?.accountConsolePath;
+    if(typeof outer==='string'&&/^\/(accounts|management)\.html(?:\?[^#]*)?$/.test(outer))history.replaceState(history.state,'',outer+location.hash);
+    const now=isAccountPage()?location.pathname+location.search:'';
+    if(now!==accountLocation){accountLocation=now;sync();}else mountNavigation();
+    dispatchEvent(new Event('cpa:navigation'));
+  });
+})(dh, Zc, Fde);
