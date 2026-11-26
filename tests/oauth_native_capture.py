@@ -2,6 +2,9 @@
 import json,os,subprocess,sys,tempfile
 from pathlib import Path
 R=Path(__file__).resolve().parent.parent;sys.path.insert(0,str(R))
+# go vet cannot chdir into a virtual new package directory in a Go overlay.
+# The shared package is vetted by egress_unit/container_platform_headers in a
+# materialized temporary module; this runner compiles and checks actual HTTP.
 from build_inputs import verify_source
 from build import check_overrides
 from host_runtime import docker_cli
@@ -14,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='cpa-oauth-capture-') as folder:
  overlay=p/'overlay.json';overlay.write_text(json.dumps({'Replace':replacements}))
  files=[str(S/k) for k in mapping if k.startswith('cmd/server/offline_') and k.endswith('.go')]
  env=dict(os.environ,GOROOT=str(T/'go'),GOMODCACHE=str(T/'modules'),GOCACHE='/tmp/cpa-linux-candidate-cache',GOOS='linux',GOARCH='arm64',CGO_ENABLED='0',GOTOOLCHAIN='local',GOENV='off',GOPROXY='off',GOSUMDB='off',GOWORK='off',GOFLAGS='')
- subprocess.run([str(T/'go/bin/go'),'test','-c','-mod=readonly','-p','2','-tags','cpa_offline','-overlay',str(overlay),'-o',str(p/'capture'),*files,str(virtual)],cwd=S,env=env,check=True)
+ subprocess.run([str(T/'go/bin/go'),'test','-c','-vet=off','-mod=readonly','-p','2','-tags','cpa_offline','-overlay',str(overlay),'-o',str(p/'capture'),*files,str(virtual)],cwd=S,env=env,check=True)
  script="""import sys,subprocess,json
 from pathlib import Path
 p=Path('/tmp/capture');p.write_bytes(sys.stdin.buffer.read());p.chmod(0o700)

@@ -59,7 +59,7 @@ function quotaCountdown(reset,now=Date.now()){
  const days=Math.floor(minutes/1440),hours=Math.floor(minutes%1440/60),mins=minutes%60;
  return days?'距重置 '+days+'天 '+hours+'小时':hours?'距重置 '+hours+'小时 '+mins+'分钟':'距重置 '+mins+'分钟';
 }
-function renderAccountQuota(parent,p){
+function renderAccountQuota(parent,p,showDetails=false){
  const wrap=text(parent,'section','','account-quota');wrap.setAttribute('aria-label','订阅额度');
  const sources=new Map();
  for(const item of accountQuotaWindows(p.state)){
@@ -74,12 +74,12 @@ function renderAccountQuota(parent,p){
   if(valid){meter.setAttribute('role','progressbar');meter.setAttribute('aria-label',item.label+(stale?'上次剩余额度':'剩余额度'));meter.setAttribute('aria-valuenow',String(remaining));meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax','100');const fill=text(meter,'span','');fill.style.width=remaining+'%';}
   if(item.stamp){const key=item.source+' · '+new Date(item.stamp).toLocaleString();sources.set(key,[...(sources.get(key)||[]),item.label]);}
  }
- for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
+ if(showDetails)for(const [stamp,labels] of sources)text(wrap,'p',(sources.size>1?labels.join('、')+' · ':'')+stamp,'help');
  const observation=p.state?.account_observation;
  for(const [key,label] of [['profile','档位'],['usage','额度']])if(observation?.[key]?.error)text(wrap,'p',label+'查询失败；'+(observation[key].observed_at?'显示上次成功结果。':'尚无结果。'),'status-bad');
  const capture=observation?.capture;
- if(capture)text(wrap,'p',capture.state==='complete'?'本次完整 HTTP 样本已加密保存 · '+capture.id:'本次 HTTP 样本未完整保存，不能用于完整重放。',capture.state==='complete'?'help':'status-bad');
- text(wrap,'p','上次观测结果；到重置时间后需更新确认。','help');
+ if(showDetails&&capture)text(wrap,'p',capture.state==='complete'?'本次完整 HTTP 样本已加密保存 · '+capture.id:'本次 HTTP 样本未完整保存，不能用于完整重放。',capture.state==='complete'?'help':'status-bad');
+ if(showDetails)text(wrap,'p','上次观测结果；到重置时间后需更新确认。','help');
 }
 
 function resetGrantSummary(state,now=Date.now()){
@@ -95,11 +95,14 @@ function resetGrantSummary(state,now=Date.now()){
  }
  return {reported:true,left:known?left:undefined,usable,grants,stamp:observation.observed_at,error:observation.error};
 }
-function renderResetGrants(parent,p){
- const view=resetGrantSummary(p.state),section=text(parent,'section','','account-quota');
+function renderResetGrants(parent,p,showDetails=false){
+ const view=resetGrantSummary(p.state);
+ if(!view.reported||!(view.left>0))return;
+ const section=text(parent,'section','','account-quota reset-grants');
  section.setAttribute('aria-label','重置卡');text(section,'strong','重置卡');
  if(!view.reported){text(section,'p','尚未报告；点击「刷新用量」读取。','help');return;}
  text(section,'p','剩余 '+(view.left===undefined?'未报告':view.left)+' 次 · 上次报告可用 '+view.usable+' 次');
+ if(!showDetails)return;
  for(const g of view.grants)if(g.ends_at)text(section,'p','有效期至 '+new Date(g.ends_at).toLocaleString(),'help');
  if(view.error)text(section,'p','本次读取失败，保留上次结果。','status-bad');
  text(section,'p','目前仅展示，消耗入口尚未开放；刷新用量不会使用重置卡。','help');

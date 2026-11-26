@@ -5,6 +5,9 @@ ROOT=Path(__file__).resolve().parent.parent;sys.path.insert(0,str(ROOT));from ho
 TOOL=Path(os.environ['CPA_BUILD_TOOLS'])
 with tempfile.TemporaryDirectory(prefix='cpa-egress-unit-') as d:
  p=Path(d)
+ (p/'internal/accountheaders').mkdir(parents=True)
+ (p/'internal/accountheaders/policy.go').write_bytes((ROOT/'src/internal/accountheaders/policy.go').read_bytes())
+
  for name in ('go.mod','go.sum'):(p/name).write_bytes((ROOT/'source'/name).read_bytes())
  for name in ('offline_network.go','offline_header_policy.go'):(p/name).write_text((ROOT/'src/cmd/server'/name).read_text().replace('//go:build cpa_offline',''))
  (p/'egress_test.go').write_bytes((ROOT/'tests/egress_unit_test.go').read_bytes())

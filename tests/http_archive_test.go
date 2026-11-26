@@ -80,3 +80,47 @@ func TestCaptureWindowAndHeaderAlarms(t *testing.T) {
  var v map[string]any;json.Unmarshal(b,&v);if len(v["alerts"].([]any))!=1{t.Fatal("missing alert")}
  if !bytes.Contains(b,[]byte("user-agent"))||!bytes.Contains(b,[]byte("x-unknown")){t.Fatal("missing field names")}
 }
+
+// Deliberately corrupt emitted observations: the monitor must not merely report
+// success because the sender and monitor share the same policy source.
+func TestUnifiedOAuthWireAudit(t *testing.T) {
+ for _,op:=range accountOperations {
+  req,_:=http.NewRequest(op.Method,"https://"+op.Host+op.Path,nil)
+  req.Header.Set("Authorization","Bearer fake-account-A")
+  applyProviderHeaders(req)
+  wire:=[]map[string]any{}
+  for k,v:=range req.Header {wire=append(wire,map[string]any{"name":k,"values":v})}
+  mismatch,unknown:=auditHeaderNames(op.Path,wire)
+  if len(mismatch)>0||len(unknown)>0{t.Fatalf("valid %s: %v %v",op.Path,mismatch,unknown)}
+  wire=append(wire,map[string]any{"name":"user-agent","values":[]string{"wrong-agent"}})
+  mismatch,_=auditHeaderNames(op.Path,wire)
+  if len(mismatch)==0{t.Fatal("duplicate/conflicting UA not detected",op.Path)}
+ }
+ bad:=[]map[string]any{{"name":"X-Unreviewed","values":[]string{"SECRET_CANARY"}}}
+ _,unknown:=auditHeaderNames("/api/oauth/profile",bad)
+ if len(unknown)!=1||unknown[0]!="x-unreviewed"{t.Fatal("unknown header not reported",unknown)}
+ req,_:=http.NewRequest("GET","https://api.anthropic.com/api/oauth/claude_cli/roles",nil);applyProviderHeaders(req)
+ wire:=[]map[string]any{}
+ for k,v:=range req.Header {wire=append(wire,map[string]any{"name":k,"values":v})}
+ wire=append(wire,map[string]any{"name":"Content-Type","values":[]string{"application/json"}})
+ mismatch,_:=auditHeaderNames(req.URL.Path,wire)
+ if len(mismatch)!=1||mismatch[0]!="content-type"{t.Fatal("roles forbidden header undetected",mismatch)}
+}
+
+func TestHTTPArchiveBeforeAndFinalPolicySnapshots(t *testing.T) {
+ root:=t.TempDir();a,err:=newHTTPArchive(root,"comparison");if err!=nil{t.Fatal(err)}
+ srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if r.Header.Get("User-Agent")!="claude-code/2.1.331"{t.Fatal("wrong wire UA")}
+  w.Write([]byte(`{"ok":true}`))
+ }));defer srv.Close()
+ before,_:=http.NewRequest("GET","https://api.anthropic.com/api/oauth/profile",nil)
+ before.Header.Set("Authorization","Bearer BEFORE_SECRET");before.Header.Set("User-Agent","prior-agent");before.Close=true
+ final:=before.Clone(before.Context());applyProviderHeaders(final)
+ final.URL.Scheme="http";final.URL.Host=strings.TrimPrefix(srv.URL,"http://")
+ res,err:=a.sendCompared(final,before,http.DefaultTransport.RoundTrip);if err!=nil{t.Fatal(err)};io.Copy(io.Discard,res.Body);res.Body.Close()
+ q:=readMeta(t,a,filepath.Join(a.dir,"0001"),"request.json.enc")
+ pre:=q["before_override"].(map[string]any)
+ if pre["headers"].(map[string]any)["User-Agent"].([]any)[0]!="prior-agent"||pre["close"]!=true||q["close"]!=false{t.Fatal("before snapshot lost")}
+ if q["headers"].(map[string]any)["User-Agent"].([]any)[0]!="claude-code/2.1.331"{t.Fatal("after snapshot lost")}
+ if before.Header.Get("User-Agent")!="prior-agent"||!before.Close{t.Fatal("caller request mutated")}
+}

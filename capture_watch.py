@@ -5,6 +5,7 @@ are written into samples/captured. Notification payload contains no account data
 import argparse,json,os,subprocess,time
 from pathlib import Path
 from host_runtime import docker_cli
+from sample_status import response_review
 ROOT=Path(__file__).resolve().parent
 
 def atomic(path,value):
@@ -56,11 +57,25 @@ def watch(state,destination,record,arm=False,hours=24,once=False,arm_only=False)
     pending=[a for a,exchanges in status['archives'].items() if a not in account['skip'] and any(a+'-'+e not in account['exported'] for e in exchanges)][:20]
     if pending:
      exported=execute(card['container'],EXPORT,{'archives':pending,'skip':account['exported']})
-     for sample in exported.get('samples',[]):atomic(destination/(sample['sample_id']+'.json'),sample)
+     for sample in exported.get('samples',[]):
+      sample['response_review']=response_review(sample)
+      atomic(destination/(sample['sample_id']+'.json'),sample)
+      account['latest_response_review']={'sample_id':sample['sample_id'],**sample['response_review']}
      incomplete={x['sample_id'] for x in exported.get('pending',[])}
      # Only close an archive if an exchange was actually exported and none is pending.
      completed={x['sample_id'] for x in exported.get('samples',[])}-incomplete
      account['exported']=sorted(set(account['exported'])|completed)
+    # Reclassify already exported sanitized samples too; no account/upstream request.
+    reviews={}
+    for sample_id in account['exported']:
+     if account.get('review_version')==1 and not sample_id.startswith(audit.get('last_archive','!')+'-'):continue
+     path=destination/(sample_id+'.json')
+     if not path.exists():continue
+     sample=json.loads(path.read_text());review=response_review(sample)
+     if sample.get('response_review')!=review:sample['response_review']=review;atomic(path,sample)
+     if sample_id.startswith(audit.get('last_archive','!')+'-'):reviews[sample_id]=review
+    account['latest_response_reviews']=reviews
+    account['review_version']=1
     for alert in audit.get('alerts',[]):
      signature=json.dumps(alert,sort_keys=True)
      if signature not in account['alert_signatures']:

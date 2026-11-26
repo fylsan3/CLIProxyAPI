@@ -98,24 +98,21 @@ func TestActualContainerAndWire(t *testing.T) {
 	}
 }
 
-func TestOAuthNativeHeadersUntouched(t *testing.T) {
+func TestOAuthFinalHeaderOwnership(t *testing.T) {
  for _,op:=range accountOperations {
   if op.Kind!="oauth" {continue}
   req,_:=http.NewRequest(op.Method,"https://"+op.Host+op.Path,nil)
-  req.Header.Set("User-Agent","axios/1.15.2")
+  req.Header.Set("User-Agent","stale-upstream-layer")
   req.Header.Set("Authorization","Bearer fixture")
-  req.Header.Set("Accept","application/json, text/plain, */*")
-  req.Header.Set("Cache-Control","no-cache")
-  req.Close=true;before:=req.Header.Clone()
+  req.Header.Set("Cache-Control","no-store");req.Close=true
   applyProviderHeaders(req)
-  if op.Path=="/api/oauth/usage" {
-   before.Set("User-Agent","claude-cli/2.1.331 (external, sdk-cli)")
-   before.Set("Content-Type","application/json")
-   before.Set("Connection","keep-alive")
-   before.Set("Anthropic-Beta","oauth-2025-04-20")
-   before.Del("Cache-Control")
-   if !reflect.DeepEqual(before,req.Header)||req.Close {t.Fatal("usage headers changed unexpectedly")}
-  } else if !reflect.DeepEqual(before,req.Header)||!req.Close {t.Fatal("native OAuth headers changed")}
+  expected:=http.Header{"Accept":[]string{"application/json, text/plain, */*"},"Accept-Encoding":[]string{"gzip, compress, deflate, br"},"Authorization":[]string{"Bearer fixture"},"User-Agent":[]string{"axios/1.15.2"},"Content-Type":[]string{"application/json"},"Connection":[]string{"keep-alive"}}
+  switch op.Path {
+  case "/api/oauth/profile":expected.Set("User-Agent","claude-code/2.1.331");expected.Set("Cache-Control","no-cache")
+  case "/api/oauth/claude_cli/roles":expected.Set("User-Agent","claude-code/2.1.331");expected.Del("Content-Type")
+  case "/api/oauth/usage":expected.Set("User-Agent","claude-cli/2.1.331 (external, sdk-cli)");expected.Set("Anthropic-Beta","oauth-2025-04-20")
+  }
+  if !reflect.DeepEqual(expected,req.Header)||req.Close {t.Fatal("final OAuth policy mismatch",op.Path,req.Header)}
  }
 }
 

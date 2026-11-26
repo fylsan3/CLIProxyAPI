@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accountheaders"
 	"net/http"
 	"net/url"
 	"strings"
@@ -176,8 +177,9 @@ type OAuthProfile struct {
 // It provides methods for generating authorization URLs, exchanging codes for tokens,
 // and refreshing expired tokens using PKCE for enhanced security.
 type ClaudeAuth struct {
-	httpClient     *http.Client
-	authorizeScope string
+	httpClient          *http.Client
+	deferAccountHeaders bool
+	authorizeScope      string
 }
 
 func resolveClaudeAuthorizeScope(cfg *config.Config) string {
@@ -225,16 +227,11 @@ func NewClaudeAuthWithProxyURL(cfg *config.Config, proxyURL string) *ClaudeAuth 
 	}
 }
 
-func applyClaudeOAuthAxiosHeaders(req *http.Request) {
-	if req == nil {
-		return
+// Containers assign managed headers exactly once at their final transport.
+func (o *ClaudeAuth) applyAccountHeaders(req *http.Request) {
+	if !o.deferAccountHeaders {
+		accountheaders.ApplyNativeOAuth(req)
 	}
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "axios/1.15.2")
-	req.Header.Set("Accept-Encoding", "gzip, compress, deflate, br")
-	req.Header.Set("Connection", "keep-alive")
-	req.Close = false
 }
 
 // fetchOAuthControlPlaneJSON issues an endpoint-specific OAuth control-plane GET and
@@ -251,15 +248,8 @@ func (o *ClaudeAuth) fetchOAuthControlPlaneJSON(ctx context.Context, endpoint, a
 	if errRequest != nil {
 		return nil, fmt.Errorf("create Claude OAuth %s request: %w", label, errRequest)
 	}
-	applyClaudeOAuthAxiosHeaders(req)
+	o.applyAccountHeaders(req)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", "claude-code/2.1.331")
-	if endpoint == RolesURL {
-		req.Header.Del("Content-Type")
-		req.Header.Del("Cache-Control")
-	} else {
-		req.Header.Set("Cache-Control", "no-cache")
-	}
 
 	resp, errDo := o.httpClient.Do(req)
 	if errDo != nil {
@@ -429,7 +419,7 @@ func (o *ClaudeAuth) ExchangeCodeForTokens(ctx context.Context, code, state stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
-	applyClaudeOAuthAxiosHeaders(req)
+	o.applyAccountHeaders(req)
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -570,7 +560,7 @@ func (o *ClaudeAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
-	applyClaudeOAuthAxiosHeaders(req)
+	o.applyAccountHeaders(req)
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {

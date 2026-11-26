@@ -1,15 +1,22 @@
 package main
-import("context";"io";"net";"net/http";"net/http/httptest";"strings";"testing";"time";"encoding/binary";"encoding/json";"os";"path/filepath";"reflect")
+import("context";"io";"net";"net/http";"net/http/httptest";"strings";"testing";"time";"encoding/binary";"encoding/json";"os";"path/filepath")
 func containerPlatformHeaders()(string,string){return "Linux","arm64"}
 func TestAllAccountPolicies(t *testing.T){
  for _,op:=range accountOperations{
   r,_:=http.NewRequest(op.Method,"https://"+op.Host+op.Path,strings.NewReader("BODY_UNCHANGED"));r.Header.Set("Authorization","Bearer fictional");r.Header.Set("X-Unrelated","keep")
   r.Close=true;r.Header.Set("Cache-Control","no-cache");r.Header["cache-control"]=[]string{"no-store"}
-  before:=r.Header.Clone();applyProviderHeaders(r)
+  applyProviderHeaders(r)
   if op.Kind=="model"{for k,v:=range modelHeaderOverrides(){if r.Header.Get(k)!=v{t.Fatal(op.Path,k)}}}else if op.Path=="/api/oauth/usage"{
    if r.Close||r.Header.Get("User-Agent")!="claude-cli/2.1.331 (external, sdk-cli)"||r.Header.Get("Content-Type")!="application/json"||r.Header.Get("Connection")!="keep-alive"||r.Header.Get("Anthropic-Beta")!="oauth-2025-04-20"{t.Fatal("usage policy mismatch",r.Header)}
    for name:=range r.Header{if strings.EqualFold(name,"Cache-Control"){t.Fatal("usage cache header retained")}}
-  }else if !reflect.DeepEqual(r.Header,before){t.Fatal("OAuth native headers changed",op)}
+  }else {
+   ua:="axios/1.15.2";if op.Path!="/v1/oauth/token"{ua="claude-code/2.1.331"}
+   if r.Header.Get("User-Agent")!=ua||r.Close||r.Header.Get("Connection")!="keep-alive"{t.Fatal("OAuth final owner",op)}
+   cache:="";if op.Path=="/api/oauth/profile"{cache="no-cache"}
+   if r.Header.Get("Cache-Control")!=cache{t.Fatal("OAuth cache policy",op)}
+   ct:="application/json";if op.Path=="/api/oauth/claude_cli/roles"{ct=""}
+   if r.Header.Get("Content-Type")!=ct{t.Fatal("OAuth content type",op)}
+  }
   body,_:=io.ReadAll(r.Body);if string(body)!="BODY_UNCHANGED"||r.Header.Get("Authorization")!="Bearer fictional"||r.Header.Get("X-Unrelated")!="keep"{t.Fatal("content/auth changed")}
   r.Method="DELETE";if _,ok:=accountOperationFor(r);ok{t.Fatal("invalid method admitted")}
  }

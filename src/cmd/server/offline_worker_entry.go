@@ -222,7 +222,9 @@ func (t *providerTransport) send(request, source *http.Request) (*http.Response,
 		}
 	}
 	if archive != nil {
-		next = func(r *http.Request) (*http.Response, error) { return archive.send(r, t.base.RoundTrip) }
+		next = func(r *http.Request) (*http.Response, error) {
+			return archive.sendCompared(r, source, t.base.RoundTrip)
+		}
 	}
 	if sample, ok := source.Context().Value(modelSampleKey{}).(*modelSample); ok && (source.URL.Path == "/v1/messages" || source.URL.Path == "/v1/messages/count_tokens") {
 		res, err = sample.send(request, next)

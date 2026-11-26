@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accountheaders"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,6 +43,9 @@ func captureAuditStatus(root string) map[string]any {
 	}
 	result["capture_active"] = captureWindowActive(root)
 	result["scope"] = "go_account_http_only"
+	result["current_policy_version"] = accountheaders.Version()
+	result["current_policy_sha256"] = accountheaders.Digest()
+	result["capture_format"] = "executor_before_policy_and_final_wire"
 	return result
 }
 func recordCaptureIssue(root, code string) {
@@ -55,7 +59,8 @@ func recordCaptureIssue(root, code string) {
 	_ = durableWrite(filepath.Join(root, "header-audit.json"), mustArchiveJSON(v))
 }
 
-// Compare observations with a separately reviewed expectation. Never include
+// Compare actual wire observations with the immutable sending policy.
+// Independent migration fixtures test the policy itself. Never include
 // credentials, unknown header values, URLs with query strings or bodies in alerts.
 func auditHeaderNames(path string, wire []map[string]any) ([]string, []string) {
 	h := http.Header{}
@@ -66,34 +71,13 @@ func auditHeaderNames(path string, wire []map[string]any) ([]string, []string) {
 			h.Add(name, v)
 		}
 	}
-	expected := map[string]string{}
-	absent := []string{}
-	if path == "/v1/messages" || path == "/v1/messages/count_tokens" {
-		expected = modelHeaderOverrides()
-	} else {
-		expected["accept"] = "application/json, text/plain, */*"
-		expected["accept-encoding"] = "gzip, compress, deflate, br"
-		expected["connection"] = "keep-alive"
-		expected["content-type"] = "application/json"
-		expected["user-agent"] = "axios/1.15.2"
-		switch path {
-		case "/api/oauth/profile":
-			expected["user-agent"] = "claude-code/2.1.331"
-			expected["cache-control"] = "no-cache"
-		case "/api/oauth/claude_cli/roles":
-			expected["user-agent"] = "claude-code/2.1.331"
-			delete(expected, "content-type")
-			absent = append(absent, "content-type", "cache-control")
-		case "/api/oauth/usage":
-			expected["user-agent"] = "claude-cli/2.1.331 (external, sdk-cli)"
-			expected["anthropic-beta"] = "oauth-2025-04-20"
-			absent = append(absent, "cache-control")
-		case "/v1/oauth/token":
-			absent = append(absent, "cache-control")
-		default:
-			return []string{"unclassified_endpoint"}, nil
-		}
+	op, ok := accountheaders.ForPath(path)
+	if !ok {
+		return []string{"unclassified_endpoint"}, nil
 	}
+	osName, arch := containerPlatformHeaders()
+	rule := accountheaders.Resolve(op.Profile, osName, arch)
+	expected, absent := rule.Set, rule.Delete
 	mismatches := []string{}
 	unknown := []string{}
 	for k, v := range expected {
@@ -108,10 +92,9 @@ func auditHeaderNames(path string, wire []map[string]any) ([]string, []string) {
 		}
 	}
 	// Dynamic/native fields are classified, not forced into the model override set.
-	known := " host content-length transfer-encoding content-type authorization x-api-key accept accept-encoding connection cache-control anthropic-beta x-claude-code-session-id x-client-request-id x-stainless-retry-count x-stainless-timeout "
 	for name := range h {
 		k := strings.ToLower(name)
-		if _, ok := expected[k]; !ok && !strings.Contains(known, " "+k+" ") {
+		if _, ok := expected[k]; !ok && !accountheaders.Known(k) {
 			unknown = append(unknown, k)
 		}
 	}
@@ -130,6 +113,8 @@ func recordHeaderAudit(root, id, path string, wire []map[string]any, writeOK boo
 	v["observed_requests"] = int(count) + 1
 	v["last_archive"] = id
 	v["last_path"] = path
+	v["policy_version"] = accountheaders.Version()
+	v["policy_sha256"] = accountheaders.Digest()
 	v["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	v["last_write_ok"] = writeOK
 	if len(mismatches) > 0 || len(unknown) > 0 || !writeOK {

@@ -180,12 +180,18 @@ def run():
     paths={x['request']['path'] for x in captured['samples']}
     assert {'/v1/oauth/token','/api/oauth/profile','/api/oauth/claude_cli/roles','/api/oauth/usage','/v1/messages'}<=paths,paths
     assert not captured['pending'],captured['pending']
+    for sample in captured['samples']:
+     assert sample['header_comparison']['available'],sample['sample_id']
+     assert sample['header_comparison']['boundary']=='executor_before_final_header_policy'
+     assert sample['capture_policy']==sample['export_policy'],sample['sample_id']
     observed=worker(owner,'/health')[1]['capture_audit']
     assert observed['capture_active'] and observed['observed_requests']>=len(captured['samples'])
     assert not observed.get('alerts'),observed
     (ROOT/'evidence'/('window-capture-'+owner+'.json')).write_text(json.dumps(captured,indent=2))
    report['cases']['all_go_account_paths_captured']=True
    report['cases']['sanitized_container_export']=True
+   report['cases']['before_after_policy_and_wire_comparison']=True
+   report['cases']['capture_export_policy_digest_matches']=True
    report['cases']['normal_headers_no_false_alert']=True
    from capture_watch import watch as collect
    monitor=state/'monitor.json';dest=state/'sanitized-source-samples'

@@ -14,7 +14,10 @@ reference=(R/'manual-header-reference.go.txt').read_text()
 baseline=reference[reference.index('func applyProviderHeaders('):reference.index('\ntype providerHeadersKey')].replace('func applyProviderHeaders(', 'func applyManualBaseline(',1)
 tool=Path(os.environ.get('CPA_BUILD_TOOLS',str(R/'.build-tools'))).resolve()
 with tempfile.TemporaryDirectory(prefix='cpa-platform-') as folder:
- p=Path(folder);(p/'go.mod').write_text('module platformcheck\n\ngo 1.26\n')
+ p=Path(folder);(p/'go.mod').write_text('module github.com/router-for-me/CLIProxyAPI/v8\n\ngo 1.26\n')
+ (p/'internal/accountheaders').mkdir(parents=True)
+ (p/'internal/accountheaders/policy.go').write_bytes((R/'src/internal/accountheaders/policy.go').read_bytes())
+
  (p/'headers.go').write_text('package main\nimport("net/http";"strings";"syscall";"encoding/json";"encoding/hex";"crypto/sha256";"os";"errors")\n'+functions+'\n'+baseline)
  (p/'policy.go').write_text((R/'src/cmd/server/offline_header_policy.go').read_text().replace('//go:build cpa_offline',''))
  (p/'headers_test.go').write_text((R/'tests/container_platform_headers_test.go').read_text())

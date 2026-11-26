@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/accountheaders"
 	"hash"
 	"io"
 	"net/http"
@@ -239,6 +240,12 @@ func (b *archiveBody) Close() error {
 }
 
 func (s *httpArchive) send(original *http.Request, next func(*http.Request) (*http.Response, error)) (*http.Response, error) {
+	return s.sendCompared(original, nil, next)
+}
+
+// before is the executor input immediately before the unified final policy,
+// not the customer/NewAPI ingress. Both snapshots remain encrypted.
+func (s *httpArchive) sendCompared(original, before *http.Request, next func(*http.Request) (*http.Response, error)) (*http.Response, error) {
 	s.mu.Lock()
 	s.next++
 	number := s.next
@@ -250,7 +257,10 @@ func (s *httpArchive) send(original *http.Request, next func(*http.Request) (*ht
 		return next(original)
 	}
 	var mu sync.Mutex
-	meta := map[string]any{"archive_id": s.id, "exchange": name, "kind": s.kind, "method": original.Method, "url": original.URL.String(), "host": original.Host, "headers": original.Header.Clone(), "content_length": original.ContentLength, "transfer_encoding": original.TransferEncoding, "close": original.Close, "captured_at": time.Now().UTC(), "complete": false}
+	meta := map[string]any{"archive_id": s.id, "exchange": name, "kind": s.kind, "method": original.Method, "url": original.URL.String(), "host": original.Host, "headers": original.Header.Clone(), "content_length": original.ContentLength, "transfer_encoding": original.TransferEncoding, "close": original.Close, "captured_at": time.Now().UTC(), "policy_version": accountheaders.Version(), "policy_sha256": accountheaders.Digest(), "complete": false}
+	if before != nil {
+		meta["before_override"] = map[string]any{"headers": before.Header.Clone(), "close": before.Close, "boundary": "executor_before_final_header_policy"}
+	}
 	wire := []map[string]any{}
 	writes := 0
 	writeRequest := func() { meta["wire_headers"] = wire; s.record(filepath.Join(dir, "request.json.enc"), meta) }

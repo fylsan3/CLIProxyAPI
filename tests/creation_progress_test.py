@@ -33,7 +33,8 @@ class CreationTests(unittest.TestCase):
             if not release.wait(3):raise RuntimeError('test_wait_expired')
             return {'environment_id':'fake-environment'}
         p=self.setup_protection(create)
-        b=Broker.__new__(Broker);b.protection=p;b.offline_only=True;b.inspect=lambda _:None
+        from maintenance import MaintenanceGate
+        b=Broker.__new__(Broker);b.protection=p;b.offline_only=True;b.inspect=lambda _:None;b.gate=MaintenanceGate()
         def run():
             try:p.create('A','fake')
             except Exception as e:errors.append(e)

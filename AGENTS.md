@@ -35,3 +35,6 @@ User selected preserving CPA routing/retry policy while repairing the worker/cen
 
 ## Latest authorization — production preparation 2026-11-26
 User now authorizes consolidated local tests, packaging and updating the local production release. Preserve account environments and credentials; no NewAPI changes. User will initiate real-account tests after readiness is reported. Capture Go account requests during an explicit test window; browser requests remain unchanged and outside this capture boundary. Only conservatively sanitized derived samples may enter samples/, never raw captures or keys.
+
+## Latest authorization — single policy deployment
+User authorized local production deployment preserving account environment/credentials and leaving NewAPI unchanged. Enable bounded header monitoring and before/after sampling; user initiates real requests. Do not make real model, manual refresh or reset-grant calls for readiness checks.

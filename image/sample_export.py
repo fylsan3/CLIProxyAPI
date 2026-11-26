@@ -11,8 +11,14 @@ SAFE_KEYS=set('model messages system tools metadata role content type text name 
 ENUMS=set('user assistant system text image tool_use tool_result message message_start message_delta message_stop content_block_start content_block_delta content_block_stop text_delta input_json_delta thinking_delta signature_delta end_turn tool_use max_tokens stop_sequence error ping api_error rate_limit_error authentication_error permission_error overloaded_error reset already_used not_limited cooldown ineligible unavailable cedar_ember five_hour seven_day seven_day_overage_included'.split())
 SAFE_HEADERS={'user-agent','content-type','accept','accept-encoding','content-encoding','connection','anthropic-version','anthropic-beta','x-app','anthropic-dangerous-direct-browser-access','x-stainless-os','x-stainless-arch','x-stainless-runtime','x-stainless-runtime-version','x-stainless-lang','x-stainless-package-version','x-stainless-retry-count','x-stainless-timeout','cache-control','transfer-encoding','retry-after','retry-after-ms'}
 # Preserve only reviewed protocol/environment values, never arbitrary strings in known headers.
-VALUES={'application/json','text/event-stream','application/json, text/plain, */*','gzip, compress, deflate, br','gzip, deflate, br, zstd','keep-alive','close','no-cache','gzip','br','zstd','deflate','chunked','2023-06-01','oauth-2025-04-20','cli','true','Linux','MacOS','arm64','x64','node','js','v26.12.1','0.128.0','axios/1.15.2','claude-code/2.1.331','claude-cli/2.1.331 (external, sdk-cli)'}
-PATHS={'/v1/oauth/token','/api/oauth/profile','/api/oauth/claude_cli/roles','/api/oauth/usage','/v1/messages','/v1/messages/count_tokens'}
+# Header-name safety is independent of the sending policy: no policy may expose
+# credentials, cookies, identifiers, or arbitrary unknown header values.
+POLICY=json.loads(Path(__file__).with_name('account_header_policy.json').read_text())
+PROTOCOL_VALUES={'content-type':{'application/json','text/event-stream'},'content-encoding':{'gzip','br','zstd','deflate'},'transfer-encoding':{'chunked'}}
+HEADER_VALUES={k:set(v) for k,v in POLICY['header_values'].items() if k in SAFE_HEADERS}
+for _name,_values in PROTOCOL_VALUES.items():HEADER_VALUES.setdefault(_name,set()).update(_values)
+
+PATHS=set(POLICY['paths'])
 class Sanitizer:
  def __init__(self,key=None):self.key=key or os.urandom(32)
  def token(self,v):return 'redacted_'+hmac.new(self.key,str(v).encode(),hashlib.sha256).hexdigest()[:16]
@@ -23,7 +29,7 @@ class Sanitizer:
   if key in ('id','uuid','request_id','grant_id','email','access_token','refresh_token'):return self.token(v)
   return v
  def headers(self,rows):
-  return [{'name':k,'values':[v if k.lower() in SAFE_HEADERS and v in VALUES else self.token(v) for v in vs]} for k,vs in rows]
+  return [{'name':k,'values':[v if k.lower() in SAFE_HEADERS and v in HEADER_VALUES.get(k.lower(),set()) else self.token(v) for v in vs]} for k,vs in rows]
  def body(self,raw,headers):
   encoding=next((vs[0] for k,vs in headers.items() if k.lower()=='content-encoding' and vs),'')
   try:
@@ -51,10 +57,37 @@ class Sanitizer:
     return {'format':'sse','lines':lines}
    return {'format':'opaque_redacted','value':self.token(raw)}
   except Exception:return {'format':'encoded_or_binary_redacted','value':self.token(raw)}
+ def header_comparison(self,q):
+  before=q.get('before_override')
+  if before is None:return {'available':False,'reason':'historical_capture_without_before_snapshot'}
+  def normalized(rows):
+   out={}
+   for k,vs in rows:out.setdefault(k.lower(),[]).extend(vs)
+   return out
+  initial=normalized(before['headers'].items())
+  assigned=normalized(q['headers'].items())
+  wire=normalized((row['name'],row['values']) for row in q['wire_headers'])
+  def differences(left,right):
+   result=[]
+   for k in sorted(left.keys()|right.keys()):
+    if left.get(k)==right.get(k):continue
+    result.append({'name':k,'action':'added' if k not in left else 'removed' if k not in right else 'replaced',
+     'before':self.headers([(k,left.get(k,[]))])[0]['values'],
+     'after':self.headers([(k,right.get(k,[]))])[0]['values']})
+   return result
+  return {'available':True,'boundary':'executor_before_final_header_policy',
+   'before_headers':self.headers(list(before['headers'].items())),
+   'after_policy_headers':self.headers(list(q['headers'].items())),
+   'policy_changes':differences(initial,assigned),'transport_changes':differences(assigned,wire),
+   'close_before':before['close'],'close_after':q['close']}
  def exchange(self,folder,key):
-  q,r,body,reply=http_archive.load_exchange(folder,key);u=urlsplit(q['url'])
+  q,r,body,reply=http_archive.load_exchange(folder,key,allow_incomplete=True);u=urlsplit(q['url'])
   path=u.path if u.path in PATHS else '/redacted-endpoint'
   return {'schema':1,'source':'captured_then_sanitized','sample_id':folder.parent.name+'-'+folder.name,'exact_original_replay':False,
+   'export_policy':{'version':POLICY['policy_version'],'sha256':POLICY['policy_sha256']},
+   'capture_policy':{'version':q.get('policy_version'),'sha256':q.get('policy_sha256')},
+   'completeness':{'request':bool(q.get('complete')),'response':bool(r.get('complete')),'original_full_replay_eligible':bool(q.get('complete') and r.get('complete'))},
+   'header_comparison':self.header_comparison(q),
    'request':{'method':q['method'],'host':u.hostname if u.hostname in ('api.anthropic.com','platform.claude.com') else 'fixture.invalid','path':path,
     'query':[[k,v] if k in ('cedar_ember','skip_spend') and v=='1' else [self.token(k),self.token(v)] for k,v in parse_qsl(u.query)],
     'headers':self.headers([(x['name'],x['values']) for x in q['wire_headers']]),'body':self.body(body,q['headers']),

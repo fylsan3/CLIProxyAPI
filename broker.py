@@ -296,7 +296,12 @@ class Broker:
                 rows=[dict(row) for row in db.execute('SELECT * FROM attempts WHERE owner=? ORDER BY started DESC,rowid DESC LIMIT 30',(owner,))]
             return 200,{'attempts':rows}
         if action=='auth-refresh':return self.central('refresh',{'slug':owner.lower()})
-        if action=='account-update':return self.invoke(owner,'/auth/account-update',{},connection)
+        if action=='account-update':
+            from action_trace import stage
+            stage('worker_dispatch')
+            code,result=self.invoke(owner,'/auth/account-update',{},connection)
+            stage('worker_response',status=code,observation_saved=isinstance(result.get('account_observation'),dict))
+            return code,result
         if action=='refresh-check':
             code,result=self.invoke(owner,'/auth/refresh-check',{},connection)
             state=result.get('state',{})

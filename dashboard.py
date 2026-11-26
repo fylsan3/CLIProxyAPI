@@ -1,10 +1,23 @@
 """The shared authenticated management contract for the offline account broker."""
 
 from account_identity import valid_slug
+import json
+
+def capture_reviews(broker,project):
+    try:
+        record=json.loads((broker.folder.parent/'capture-monitor.json').read_text())
+        account=record.get('accounts',{}).get(project['slug'].upper(),{})
+        if account.get('environment_id')!=project.get('protection',{}).get('environment_id'):return {}
+        archive=project.get('state',{}).get('capture_audit',{}).get('last_archive')
+        return {k:v for k,v in account.get('latest_response_reviews',{}).items() if archive and k.startswith(archive+'-')}
+    except (OSError,ValueError,TypeError):return {}
 
 def snapshot(broker):
     _, result = broker.admin('list', {})
     for project in result['projects']:
+        from action_trace import latest
+        project['last_account_update']=latest(broker.folder,project['slug'])
+        project['response_reviews']=capture_reviews(broker,project)
         identity=project.get('identity')
         if identity and identity.get('email'):project['label']=identity['email']
         _, history = broker.admin('history', {'slug': project['slug']})
@@ -54,7 +67,19 @@ def action(broker, body):
         args['proxy_url'] = body['proxy_url']
     try:broker.registry.get(body['slug'])
     except ValueError:return 400,{'error':'account_not_registered'}
-    try:return broker.admin(operation, args)
+    try:
+        if operation=='account-update':
+            from action_trace import tracking,stage
+            with tracking(broker,body['slug'],operation) as trace:
+                try:
+                    code,result=broker.admin(operation,args)
+                    observation=result.get('account_observation',{})
+                    stage('controller_response',status=code,ok=result.get('ok') is True,partial=result.get('partial') is True,
+                          attempted_at=observation.get('attempted_at'),archive_id=observation.get('capture',{}).get('id'))
+                    return code,dict(result,operation_id=trace['operation_id'],receipt_save_failed=trace.get('receipt_save_failed',False))
+                except Exception:
+                    stage('controller_failed');raise
+        return broker.admin(operation,args)
     except ValueError as error:
         known={'container_unavailable','browser_sandbox_unavailable','browser_start_failed','authorization_url_rejected','browser_restore_unavailable','browser_operation_failed','account_busy','account_maintenance','authorization_pending'}
         if str(error) in known:return 409,{'error':str(error)}

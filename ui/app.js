@@ -15,6 +15,12 @@ function fact(parent,label,value,tone=''){const group=text(parent,'div','');text
 const failedReasons=new Set(['container_stopped','worker_unavailable','binding_check_failed','credential_save_failed','account_proxy_unavailable','network_status_unknown','environment_backup_required','environment_protection_unknown','credential_expired','credential_rejected','account_disabled','account_unavailable']);
 const failedPhases=new Set(['creation_failed','authorization_failed','backup_failed','recovery_check_failed']);
 function accountTone(p){return p.overall_ready?'status-ok':failedPhases.has(p.protection?.phase)||failedReasons.has(p.reason)||p.state?.authorization_issue?'status-bad':'';}
+function captureNeedsAttention(p){
+ const audit=p.state?.capture_audit||{};if(audit.alerts?.length)return true;
+ if(!audit.capture_issue)return false;if(audit.capture_issue!=='response_capture_incomplete')return true;
+ const reviews=Object.values(p.response_reviews||{});
+ return !reviews.length||reviews.some(r=>r.http_response!=='complete'&&r.model_response!=='complete');
+}
 function attemptTone(a){return a.stop_reason||Number(a.status)>=400||a.state==='not_dispatched'?'status-bad':a.state==='completed'&&Number(a.status)>=200&&Number(a.status)<300?'status-ok':'';}
 
 function showAdd(open=true){const panel=document.querySelector('#account-add');panel.hidden=!open;document.querySelector('#add-account').setAttribute('aria-expanded',String(open));if(open)document.querySelector('#account-proxy').focus();else document.querySelector('#add-account').focus();}
@@ -93,15 +99,15 @@ function renderCard(p,data){
  if(p.container){
   if(viewers[p.slug]){const link=text(actions,'a','进入容器浏览器','button-link');link.href=viewers[p.slug];link.target='_blank';link.rel='noreferrer noopener';}
   const stopped=p.reason==='container_stopped';
-  if(!stopped){action(actions,'open-browser',viewers[p.slug]?'展开 / 重新进入浏览器':'打开容器浏览器',true);if(viewers[p.slug])action(actions,'close-browser','关闭容器浏览器',true);}
+  if(!stopped){action(actions,'open-browser','浏览器',true);if(viewers[p.slug])action(actions,'close-browser','关闭容器浏览器',true);}
   if(p.reason==='authorization_pending')action(actions,'auth-cancel','取消本次授权',true);
   const restart=action(actions,'restart',stopped?'启动容器':'重启容器',true);
   if((p.state?.active_calls||0)>0||p.state?.refreshing||p.reason==='authorization_pending'||p.reason==='account_maintenance'){restart.disabled=true;restart.title='请等待正在执行的任务、刷新或授权完成后再重启';}
-  if(p.state?.authorized){const b=action(actions,'account-update',p.state.account_updating?'正在刷新…':'刷新用量',true);b.disabled=working||p.state.account_updating||stopped;}
+  if(p.state?.authorized){const b=action(actions,'account-update',p.state.account_updating?'正在刷新…':'刷新用量',true);b.classList.add('usage-refresh');b.disabled=working||p.state.account_updating||stopped;}
  }
  if(['backup_failed','recovery_check_failed'].includes(protection.phase)||(p.state?.authorized&&!protection.backup_verified))action(actions,'retry-backup','重试环境备份');
  if(!actions.children.length)actions.hidden=true;
- if(p.state?.capture_audit?.alerts?.length||p.state?.capture_audit?.capture_issue)text(card,'p','请求采样或请求头存在异常，请立即查看详情中的测试采样记录。','status-bad');
+ if(captureNeedsAttention(p))text(card,'p','请求采样或请求头存在异常，请立即查看详情中的测试采样记录。','status-bad');
  const details=text(card,'section','','account-detail');
  const toggle=text(headingActions,'button',expandedAccounts.has(p.slug)?'关闭详情':'详情','detail-toggle secondary');
  toggle.dataset.focusId=p.slug+':details';toggle.setAttribute('aria-expanded',String(expandedAccounts.has(p.slug)));toggle.setAttribute('aria-controls','details-'+p.slug);toggle.setAttribute('aria-label',(p.label||p.slug)+' · '+(expandedAccounts.has(p.slug)?'关闭详情':'详情'));
@@ -134,8 +140,13 @@ function renderCard(p,data){
  if(p.last_success_at)text(section,'p','最近成功调用：'+new Date(p.last_success_at*1000).toLocaleString(),'status-ok');else text(section,'p','尚无成功调用记录；可接单表示本地条件通过。');
  section=detail(content,'环境保护与备份');text(section,'p',protectionLabels[protection.phase]||'环境保护状态未知',protection.phase==='ready'?'status-ok':failedPhases.has(protection.phase)?'status-bad':'');if(protection.environment_id)text(section,'p','环境编号：'+protection.environment_id.slice(0,12));if(protection.initial_backup)text(section,'p','初始环境备份：已完成','status-ok');if(protection.verified_at)text(section,'p','完整备份校验：'+new Date(protection.verified_at*1000).toLocaleString(),'status-ok');
  if(backup){text(section,'p',backup.state==='exported'?'加密备份已保存 · 凭据版本 '+backup.revision+' · '+new Date(backup.exported_at*1000).toLocaleString():backup.state==='not_created'?'创建环境后自动备份':backup.state==='not_exported'?'等待保存加密备份包':'备份位置暂不可用',backup.state==='exported'?'status-ok':['not_created','not_exported'].includes(backup.state)?'':'status-bad');if(backup.stale)text(section,'p','加密包为旧凭据版本，当前版本 '+backup.current_revision+'；正在等待自动导出更新。','status-bad');if(backup.environment_outdated)text(section,'p','加密包尚未更新到当前运行环境；已保留旧包，等待导出完成。','status-bad');if(backup.warning&&!backup.stale&&!backup.environment_outdated)text(section,'p',backup.state==='exported'?'最近一次加密导出未完成，上一份加密包保留，可重试。':'加密备份包尚未生成；容器内完整备份仍保留，请重试导出。','status-bad');if(backup.error_code)text(section,'p',({backup_too_large:'压缩后的加密包超过大小上限',backup_expanded_too_large:'备份内容超过解压大小上限',checkpoint_changed_retry_export:'备份期间凭据更新，请重新导出',backup_export_failed:'导出未完成，请检查存储空间与备份记录'})[backup.error_code]||'导出错误待检查','status-bad');}text(section,'p','本地备份不能覆盖整台主机丢失；异机副本尚未验证。');
- section=detail(content,'测试采样与请求头检查');const audit=p.state?.capture_audit||{};text(section,'p',audit.capture_active?'测试采样已开启：记录 Go 账号请求；不含浏览器和网络探测':'测试窗口未开启；刷新用量仍按既有规则留样');text(section,'p',`已观察请求：${audit.observed_requests||0}`);if(audit.capture_issue)text(section,'p','采样异常：'+audit.capture_issue,'status-bad');for(const alert of (audit.alerts||[]).slice(-5)){text(section,'p',`请求头需检查 ${alert.path}：${[...(alert.mismatched_headers||[]),...(alert.unclassified_headers||[])].join('、')||'发送失败'} · ${alert.at}`,'status-bad');}
- section=detail(content,'上游额度观测');renderAccountQuota(section,p);if(p.state?.quota_observation?.reported)for(const line of quotaLines(p.state.quota_observation))text(section,'p',line);
+ section=detail(content,'测试采样与请求头检查');const audit=p.state?.capture_audit||{};text(section,'p',audit.capture_active?'测试采样已开启：记录 Go 账号请求；不含浏览器和网络探测':'测试窗口未开启；刷新用量仍按既有规则留样');text(section,'p',`已观察请求：${audit.observed_requests||0}`);if(audit.capture_issue)text(section,'p',audit.capture_issue==='response_capture_incomplete'?'HTTP 样本结束尚未确认；这项记录未判断模型回复是否已结束，不能用于完整 HTTP 重放。':'采样异常：'+audit.capture_issue,audit.capture_issue==='response_capture_incomplete'?'help':'status-bad');for(const alert of (audit.alerts||[]).slice(-5)){text(section,'p',`请求头需检查 ${alert.path}：${[...(alert.mismatched_headers||[]),...(alert.unclassified_headers||[])].join('、')||'发送失败'} · ${alert.at}`,'status-bad');}
+ for(const [id,review] of Object.entries(p.response_reviews||{})){text(section,'p','最近样本：'+id);text(section,'p','HTTP 原始样本：'+(review.http_response==='complete'?'完整':'结束未确认'),review.http_response==='complete'?'status-ok':'help');text(section,'p','模型回复：'+({complete:'已观察到完整结束',end_unconfirmed:'未确认完整结束',upstream_error:'上游返回错误',not_observed:'该样本未判断模型回复'}[review.model_response]||'未判断'),review.model_response==='complete'?'status-ok':review.model_response==='upstream_error'?'status-bad':'help');text(section,'p','客户端是否完整接收：当前采样边界无法确认','help');}
+ section=detail(content,'用量刷新记录');
+ const update=p.last_account_update;
+ if(update){text(section,'p','操作记录：'+update.operation_id);const stages={controller_received:'中央管理已收到确认请求',worker_dispatch:'正在交给账号执行器',worker_response:'已收到执行器回执',controller_response:'管理结果已生成',controller_failed:'管理操作中断'};for(const event of update.events||[])text(section,'p',new Date(event.at*1000).toLocaleString()+' · '+(stages[event.stage]||event.stage)+(event.status?' · HTTP '+event.status:'')+(event.stage==='controller_response'?(event.ok?' · 更新成功':event.partial?' · 部分成功':' · 未更新'):''),event.stage==='controller_failed'||event.status>=400?'status-bad':'');}
+ else text(section,'p','尚无操作回执；历史访问日志无法确认是否点过“确定刷新”。','help');
+ section=detail(content,'上游额度观测');renderAccountQuota(section,p,true);renderResetGrants(section,p,true);if(p.state?.quota_observation?.reported)for(const line of quotaLines(p.state.quota_observation))text(section,'p',line);
  section=detail(content,'已确认用量');if(p.usage){const u=p.usage;text(section,'p','输入：'+(u.totals.input_tokens??'未报告')+' · 输出：'+(u.totals.output_tokens??'未报告'));const counts=text(section,'p','');for(const [key,label] of [['confirmed','完整'],['partial','部分'],['unreported','未报告'],['invalid','异常']]){if(counts.childNodes.length)text(counts,'span',' · ');const n=u.attempt_counts[key];text(counts,'span',label+' '+n,n>0?(key==='confirmed'?'status-ok':key==='invalid'?'status-bad':''):'');}text(section,'p','模型报告值，不是账单；部分记录不计入合计。');}else text(section,'p','暂无用量记录。');
  section=detail(content,'累计请求');if(p.statistics)text(section,'p','请求 '+p.statistics.requests+' · 执行尝试 '+p.statistics.attempts+' · 成功 '+p.statistics.successful_attempts+' · 失败 '+p.statistics.failed_attempts);
  section=detail(content,'最近执行记录');if(!p.attempts?.length)text(section,'p','暂无执行记录。');for(const a of p.attempts||[])text(section,'p',(results[a.state]||a.state)+' · '+a.id.slice(0,10)+(a.status?' · HTTP '+a.status:'')+(a.stop_reason?' · '+(stops[a.stop_reason]||a.stop_reason):''),attemptTone(a));
@@ -185,7 +196,7 @@ async function operate(slug,action){
  if(action==='account-update'){
   confirming=true;const dialog=document.querySelector('#usage-refresh-dialog');document.querySelector('#usage-refresh-account').textContent=currentProjects.find(p=>p.slug===slug)?.label||slug;dialog.returnValue='';
   let accepted=false;try{accepted=await new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.showModal();});}finally{confirming=false;}
-  if(!accepted)return;
+  if(!accepted){document.querySelector('#progress').textContent='已取消刷新用量，没有发送账号查询。';return;}
  }
  if(action==='restart'){
   confirming=true;const dialog=document.querySelector('#restart-dialog');document.querySelector('#restart-account').textContent=currentProjects.find(p=>p.slug===slug)?.label||slug;dialog.returnValue='';
@@ -202,7 +213,7 @@ async function operate(slug,action){
  if(action==='create'){const card=[...accounts.querySelectorAll('.account-card')].find(c=>c.dataset.account===slug);if(card)text(card.querySelector('.card-main'),'p','正在提交创建请求…','creation-submitting').setAttribute('role','status');}
  try{const body={slug,action};if(action==='create')body.proxy_url=proxies[slug];if(action==='auth-complete')body.state=pending[slug];
  const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json','X-Offline-View':sessionStorage.getItem(tokenKey)},body:JSON.stringify(body)});const data=await r.json();
- if(!r.ok){const code=data.error?.message||data.error;throw Error(labels[code]||'刷新或操作未完成，请查看账号的服务状态与刷新状态。');}
+ if(!r.ok){const code=data.error?.message||data.error;throw Error((labels[code]||'刷新或操作未完成，请查看账号的服务状态与刷新状态。')+(data.operation_id?' 操作记录：'+data.operation_id:''));}
  if(data.viewer_url){viewers[slug]=data.viewer_url;if(action==='auth-begin')trackedAuthorization=slug;}
  if(action==='close-browser'||action==='restart')delete viewers[slug];
  if(action==='proxy-view')revealedProxies[slug]=data.proxy_url;
@@ -210,6 +221,7 @@ async function operate(slug,action){
  if(action==='auth-complete'||action==='auth-cancel')delete pending[slug];
  if(action==='auth-cancel'){delete viewers[slug];if(trackedAuthorization===slug)trackedAuthorization='';}
  progress.textContent=action==='account-update'?(data.ok?'账号档位与额度已更新。':data.partial?'部分资料更新成功；失败项目保留旧值，请查看卡片提示。':'本次查询未成功，已有资料保留；请查看卡片提示。'):action==='proxy-view'?'已显示此账号绑定的 SOCKS 地址。':action==='auth-cancel'?'已取消本次授权并关闭浏览器，账号与容器保留。':data.queued?'加密备份已排队，稍后自动更新结果；不额外停止调用。':data.viewer_url?(action==='auth-begin'?'浏览器已启动，请点击「进入容器浏览器」完成授权；完成后自动关闭并备份。':'原账号容器浏览器已打开，请点击「进入容器浏览器」。未重新发起授权。'):'操作已完成，账号状态已更新。';
+ if(action==='account-update'&&data.operation_id)progress.textContent+=' 操作记录：'+data.operation_id;
  }catch(e){progress.textContent=e.message;}finally{working=false;await refresh(true);}
 }
 

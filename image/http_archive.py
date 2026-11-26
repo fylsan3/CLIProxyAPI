@@ -31,14 +31,14 @@ def decrypt(path,key):
     if not ended:raise ValueError('archive_final_record_missing')
     return b''.join(out)
 
-def load_exchange(folder,key):
+def load_exchange(folder,key,*,allow_incomplete=False):
     if folder.is_symlink() or not folder.is_dir():raise ValueError('archive_directory_required')
     request=json.loads(decrypt(folder/'request.json.enc',key));response=json.loads(decrypt(folder/'response.json.enc',key))
     if any(meta.get('archive_id')!=folder.parent.name or meta.get('exchange')!=folder.name for meta in (request,response)):raise ValueError('archive_binding_changed')
     bodies=[]
     for kind,meta in [('request',request),('response',response)]:
         body=decrypt(folder/(kind+'.bin.enc'),key)
-        if not meta.get('complete') or len(body)!=meta.get('bytes') or hashlib.sha256(body).hexdigest()!=meta.get('sha256'):
+        if (not allow_incomplete and not meta.get('complete')) or len(body)!=meta.get('bytes') or hashlib.sha256(body).hexdigest()!=meta.get('sha256'):
             raise ValueError('incomplete_or_changed_'+kind)
         bodies.append(body)
     if not request.get('write_succeeded') or not request.get('wire_headers'):raise ValueError('request_write_not_verified')

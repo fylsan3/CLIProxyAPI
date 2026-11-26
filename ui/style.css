@@ -47,7 +47,7 @@ dialog{color:var(--text-primary,#2d2a26);background:var(--bg-primary,#fff);borde
 @media(max-width:520px){.card-heading-actions{flex-direction:column;align-items:flex-end;gap:8px}.card-heading-actions .badge{max-width:none}.detail-portal{width:calc(100vw - 24px)}.detail-portal .account-card{max-height:calc(100dvh - 32px)}.detail-portal .card-main{padding:18px}}
 
 /* Compact list cards: actions must not set the grid's minimum width. */
-#accounts{grid-template-columns:repeat(auto-fill,minmax(0,min(100%,440px)));justify-content:start}
+#accounts{grid-template-columns:repeat(auto-fill,minmax(0,min(100%,380px)));justify-content:start}
 .account-card,.account-slot{min-width:0}.card-heading{gap:12px}.account-title{flex:1;min-width:0}
 .card-heading-actions{gap:6px}.card-heading-actions .detail-toggle{min-width:60px;padding:6px 10px;gap:5px}
 .card-heading-actions .badge{padding:4px 7px}.detail-portal{width:min(920px,calc(100vw - 48px))}
@@ -58,3 +58,11 @@ dialog{color:var(--text-primary,#2d2a26);background:var(--bg-primary,#fff);borde
 .quota-heading{align-items:baseline}.quota-heading>span{min-width:0}.quota-countdown{font-size:11px;font-weight:400;opacity:.8}.quota-heading strong{white-space:nowrap}.quota-window.quota-warning .quota-meter span{background:#b77912}.quota-window.quota-danger .quota-meter span{background:var(--status-bad,#b42318)}.quota-window.quota-stale .quota-meter span{background:#899088}.quota-window.quota-stale .quota-heading{color:var(--text-secondary,#657065)}
 
 .subscription-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.subscription-heading .subscription-badge{margin:0}.account-title .account-email{margin-top:7px;font-size:13px;overflow-wrap:anywhere}
+
+/* Compact account controls; retain the surrounding glass and detail animation. */
+.account-card .actions{gap:6px;margin-top:14px}
+.account-card button,.account-card .button-link{min-height:26px;padding:3px 8px;gap:4px;border-radius:6px;font-size:12px;line-height:18px}
+.account-card .card-heading-actions .detail-toggle{min-width:44px;min-height:26px;padding:3px 8px;gap:4px}
+.account-card .actions .usage-refresh{margin-inline-start:auto;order:1}
+.account-card .reset-grants{gap:4px;font-size:12px}
+@media(pointer:coarse){.account-card button,.account-card .button-link,.account-card .card-heading-actions .detail-toggle{min-height:36px}}

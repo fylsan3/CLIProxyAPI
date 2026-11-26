@@ -14,9 +14,11 @@ def check_overrides():
  def values(text):
   pairs=re.findall(r'"([a-z-]+)":\s*("[^"\n]*"|platformOS|platformArch)',text)
   return {k:({'platformOS':'Linux','platformArch':'arm64'}.get(v,v.strip('"'))) for k,v in pairs}
- actual=(ROOT/'src/cmd/server/offline_header_policy.go').read_text().split('func modelHeaderOverrides()',1)[1].split('func replaceAccountHeaders',1)[0]
+ from account_header_policy import load_policy,resolve
+ doc,_=load_policy()
  reference=(ROOT/'manual-header-reference.go.txt').read_text().split('values := map[string]string{',1)[1].split('}',1)[0]
- assert values(actual)==values(reference) and len(values(actual))==12,'manual model override values changed'
+ actual=resolve(doc,'model')['set']
+ assert actual==values(reference) and len(actual)==12,'manual model override values changed'
  policy=json.loads((ROOT/'header-policy.json').read_text())
  code=(ROOT/'src/internal/util/container_http_headers.go').read_text().split('var containerRequestBlocked = map[string]bool{',1)[1].split('}',1)[0]
  assert set(policy['request_blocked'])==set(re.findall(r'"([^"]+)":\s*true',code)),'header policies diverged'
@@ -42,6 +44,8 @@ def build(images=True, runtime_base=None, fixture_base=None):
  for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
  from build_inputs import verify_source
  verify_source(ROOT)
+ from account_header_policy import generate
+ generate()
  check_overrides()
  run([sys.executable,'-B',str(ROOT/'build_page.py')])
  mapping=json.loads((ROOT/'overlay-inputs.json').read_text())
@@ -69,7 +73,7 @@ def build(images=True, runtime_base=None, fixture_base=None):
  base=json.loads((ROOT/'base-images.json').read_text())
  with tempfile.TemporaryDirectory(prefix='cpa-unified-image-') as folder:
   p=Path(folder);shutil.copy2(ROOT/'image/worker',p/'worker');(p/'worker').chmod(0o755)
-  runtime_files={'browser_worker.py':'/opt/sample/worker.py','http_archive.py':'/opt/native/http_archive.py','sample_export.py':'/opt/native/sample_export.py','bundle_io.py':'/opt/native/bundle_io.py','entry.py':'/opt/native/entry.py','network_boot.py':'/opt/native/network_boot.py','network_gate.py':'/opt/native/network_gate.py','locale_probe.py':'/opt/native/locale_probe.py','browser_resources.py':'/opt/native/browser_resources.py'}
+  runtime_files={'account_header_policy.json':'/opt/native/account_header_policy.json','browser_worker.py':'/opt/sample/worker.py','http_archive.py':'/opt/native/http_archive.py','sample_export.py':'/opt/native/sample_export.py','bundle_io.py':'/opt/native/bundle_io.py','entry.py':'/opt/native/entry.py','network_boot.py':'/opt/native/network_boot.py','network_gate.py':'/opt/native/network_gate.py','locale_probe.py':'/opt/native/locale_probe.py','browser_resources.py':'/opt/native/browser_resources.py'}
   instructions='FROM '+(runtime_base or base['id'])+'\nCOPY --chown=1001:1001 worker /opt/native/worker\n'
   for name,destination in runtime_files.items():
    shutil.copy2(ROOT/'image'/name,p/name);instructions+='COPY --chown=1001:1001 '+name+' '+destination+'\n'

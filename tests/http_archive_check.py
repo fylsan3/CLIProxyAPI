@@ -6,7 +6,10 @@ sys.path.insert(0,str(R))
 from host_runtime import docker_cli
 T=Path(os.environ['CPA_BUILD_TOOLS'])
 with tempfile.TemporaryDirectory(prefix='cpa-archive-test-') as tmp:
- p=Path(tmp);(p/'go.mod').write_text('module archivecheck\n\ngo 1.26\n')
+ p=Path(tmp);(p/'go.mod').write_text('module github.com/router-for-me/CLIProxyAPI/v8\n\ngo 1.26\n')
+ (p/'internal/accountheaders').mkdir(parents=True)
+ (p/'internal/accountheaders/policy.go').write_bytes((R/'src/internal/accountheaders/policy.go').read_bytes())
+
  (p/'archive.go').write_text((R/'src/cmd/server/offline_http_archive.go').read_text().replace('//go:build cpa_offline',''))
  source=(R/'src/cmd/server/offline_worker_entry.go').read_text();helpers=source[source.index('func safeFile('):source.index('func saveRecord(')]
  (p/'storage.go').write_text('package main\nimport("os";"syscall";"errors";"path/filepath")\n'+helpers)
