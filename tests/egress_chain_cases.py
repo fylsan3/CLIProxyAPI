@@ -19,7 +19,7 @@ def exercise(report,cards,specs,fixture,worker,browser,action,management,request
   state=run(owner,"from pathlib import Path;import json;print(Path('/run/network/live/status.json').read_text())")
   assert state['healthy'] and state['egress_manager']=='go' and state['timezone_check_reason']=='timezone_verified',state
   assert state['periodic_network_checks'] is False
-  health=worker(owner,'/health')[1];assert health['egress_policy']=='account-egress-3-usage-headers' and health['resources']['memory_limit_bytes']==2*1024**3
+  health=worker(owner,'/health')[1];assert health['egress_policy']=='account-egress-4-single-source' and health['resources']['memory_limit_bytes']==2*1024**3
   assert not browser(owner,{'op':'status'})['browser']
   process=run(owner,"""from pathlib import Path
 import json

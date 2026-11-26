@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "candidate": "offline-20261127-8e502d5a",
+  "tested_application_source_commit": "8e502d5ae5ac030e3c1a30e7c9801941e09f7ed2",
+  "source_branch": "codex/cooldown-bridge-a-20261126",
+  "archive_revision_changes": "test harness maintenance and archival metadata/docs only; application/header source unchanged",
+  "production_deployed": false,
+  "real_provider_verified": false,
+  "compiled_worker_reused": true,
+  "build_profile": "../../build-profiles/offline-20261127.json",
+  "source_inputs_sha256": "1715ee6ff0da647d1ff1862453017dc757ea1557ed81a11da24bb0e063fa02e0",
+  "overlay_inputs_sha256": "a1d285c3ce33478518ce35f905a532107b8c0b704a01fafd91f11708b9674ed0",
+  "manual_header_reference_sha256": "c1642b84bd2d1b4b0fcc5f02f008a36a2c10d2d8c9c2612220dcc448d9d7875a",
+  "shared_header_policy_sha256": "4fd0908d44b9f5e4f1322cbcb1c8d875bb445ba2f1c675660a029a74ecd869bb",
+  "artifact_files": {
+    "image/worker": {
+      "sha256": "c9ea6876a87e1650a51340481c188b91f20c66d0632b1571e22fca0d2c8c811b",
+      "bytes": 45125780,
+      "format": "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, Go BuildID=DLR8UohHaARuufnGhMxs/uuQKF2K9_88nCQwoczv4/6Ox0-kJ8CytmBo95Hr4n/iJapPIv00_8vfQzJbrnw, BuildID[sha1]=555b3dd1a517298b5a1d15741eb521b0568b0efd, with debug_info, not stripped"
+    },
+    "central/cli-proxy-api-linux-arm64": {
+      "sha256": "78fb9a3dd036d9a8e2f8355e08a5c51819860e4c3db56031aeadbac8d048f6da",
+      "bytes": 98601868,
+      "format": "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, Go BuildID=ZHCeQHZV0B1qAiW7TG1P/gZqsFsoNZg0waCxQIerI/NXmCmBy187XLME668o9l/QbTJv8UUrQbOe5vkKuM6, BuildID[sha1]=4296e4714328f360568c2eecb0aa27287fc50555, with debug_info, not stripped"
+    },
+    "central/cli-proxy-api": {
+      "sha256": "5f03bfd3c69ec9a17bba9f2d6139f6e994b3885b48042b155a4bd11c611cd25a",
+      "bytes": 104594626,
+      "format": "Mach-O 64-bit executable arm64"
+    },
+    "config/inspect-darwin": {
+      "sha256": "42be1994626c9a85e589a1c01f405a908d6384f9830e23738beda6b22efef61f",
+      "bytes": 12122530,
+      "format": "Mach-O 64-bit executable arm64"
+    },
+    "config/inspect-linux": {
+      "sha256": "7291daab52fb7d55a40a83abe213ff7cb337ec2d4a9b6e96fb16da18721bf4a6",
+      "bytes": 11832578,
+      "format": "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, Go BuildID=yArSNUJkvylhYoqXP9cV/ogJcpY699TfFYR2MAS-L/yoF37Cs9HdzZr1FTXWy3/Snm_DLJWRg50ogkAz7HB, BuildID[sha1]=27c89c6478908eb9da9fd67c26849543d8ad2078, with debug_info, not stripped"
+    },
+    "static/management.local.html": {
+      "sha256": "ed1f51d71debfeb7c2e69498798482190a100983cc1691f86ec55fa2a8c95dd2",
+      "bytes": 3916527,
+      "format": "HTML document text, ASCII text, with very long lines (38307)"
+    },
+    "ui/compiled.js": {
+      "sha256": "88f6bfe3a2c04c35ac61ef26a603b2c0ffea82d88f2f41dfef8f84bbbac123e0",
+      "bytes": 125189,
+      "format": "Unicode text, UTF-8 text, with very long lines (19880)"
+    },
+    "image/account_header_policy.json": {
+      "sha256": "901e527dc32eb79317e16c37ac44d4a1fd3d352db241f849981816c9ed9a1be1",
+      "bytes": 1451,
+      "format": "JSON data"
+    }
+  },
+  "images": {
+    "id": "sha256:f69699bb2a65376d242963ea973d3205b01c004689cbef1de1f29a43d5e20558",
+    "tls_test": "sha256:09c5775d23fd4c31b44fb5139bfca650e312257917badfa85f5948954edc83e5",
+    "tls_fixture": "sha256:0d665da5bc6444870fdabce6cc7f0527c43ab033ca68000740dd368873cd13ee"
+  },
+  "image_roles": {
+    "id": "runtime; no test CA",
+    "tls_test": "closed test only; contains test CA",
+    "tls_fixture": "fictional upstream only; contains test server key"
+  },
+  "archives": {
+    "compiled_artifacts": {
+      "file": "cpa-compile-8e502d5a-arm64.tar.gz",
+      "bytes": 124946507,
+      "sha256": "d9aee91abd85c5b1f546086219afcca4dbf1d7f0c5a23d61c4f1757e8462a23d"
+    },
+    "candidate_images": {
+      "file": "cpa-isolated-images-8e502d5a-arm64.tar.gz",
+      "bytes": 754682309,
+      "sha256": "a0625d923e100d8b884db7c239c1862d0250d33c2f35601bd5dce647f3e7b828",
+      "repo_tags": [
+        "cpa-isolated-8e502d5a-20261127:runtime",
+        "cpa-isolated-8e502d5a-20261127:tls-test",
+        "cpa-isolated-8e502d5a-20261127:fixture"
+      ],
+      "seconds": 13.4,
+      "contains_test_images": true,
+      "runtime_has_no_test_ca": true
+    },
+    "build_bases": {
+      "file": "cpa-build-bases-20261127-arm64.tar.gz",
+      "bytes": 735240976,
+      "sha256": "6f36e08ef5e910ad30e68e86e37b1e8d20eb7e64614c33d393c10631078dbaa6",
+      "image_ids": [
+        "sha256:71b3ad37e0d202c5368ff149d2d79b653d6cd1aec8412628639892282a2d85c5",
+        "sha256:59a1275ed39b7ff42c2d1e419bccbfbc12febc62b67c3620923a5ad9edd97a5a"
+      ],
+      "registry_pushed": false,
+      "archive_identity_verification": [
+        {
+          "engine_image_id": "sha256:71b3ad37e0d202c5368ff149d2d79b653d6cd1aec8412628639892282a2d85c5",
+          "archive_config": "blobs/sha256/88b0fc28af6f61df2de960ecbead2d67175a2c99a03434f63a9d7959824e91ae",
+          "layers_and_runtime_configuration_match": true,
+          "id_kind": "local engine image identity; not assumed equal to archive config digest"
+        },
+        {
+          "engine_image_id": "sha256:59a1275ed39b7ff42c2d1e419bccbfbc12febc62b67c3620923a5ad9edd97a5a",
+          "archive_config": "blobs/sha256/3b9931fb4df3f8b13744e3effdaa20baa655902085c64dff4da0f43f43fd4bad",
+          "layers_and_runtime_configuration_match": true,
+          "id_kind": "local engine image identity; not assumed equal to archive config digest"
+        }
+      ],
+      "loaded_or_run": false
+    }
+  },
+  "artifact_storage": {
+    "large_archives": "retained locally with checksums; not stored in Git or published to registry",
+    "repository_contains": "source, docs, immutable identities, sanitized result metadata; no raw request samples or credentials"
+  },
+  "test_record": "tests.json",
+  "remaining_before_release": [
+    "account environment baseline/mount/rollback preflight",
+    "separately authorized official subscription acceptance; preserve existing authorization"
+  ]
+}

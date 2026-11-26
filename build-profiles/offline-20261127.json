@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "profile": "offline-20261127-arm64",
+  "validated_source_commit": "8e502d5ae5ac030e3c1a30e7c9801941e09f7ed2",
+  "base_images_file_preserved": true,
+  "runtime_base": "sha256:71b3ad37e0d202c5368ff149d2d79b653d6cd1aec8412628639892282a2d85c5",
+  "fixture_base": "sha256:59a1275ed39b7ff42c2d1e419bccbfbc12febc62b67c3620923a5ad9edd97a5a",
+  "image_id_kind": "local Docker engine image identity, not a registry pull reference",
+  "platform": "linux/arm64",
+  "os_release": "Ubuntu 24.04.3 LTS",
+  "toolchain": "Go 1.26.10",
+  "dependency_downloads": false,
+  "full_build_command": [
+    "python3",
+    "-B",
+    "build.py",
+    "--runtime-base",
+    "sha256:71b3ad37e0d202c5368ff149d2d79b653d6cd1aec8412628639892282a2d85c5",
+    "--fixture-base",
+    "sha256:59a1275ed39b7ff42c2d1e419bccbfbc12febc62b67c3620923a5ad9edd97a5a"
+  ],
+  "profile_auto_loaded_by_build_py": false,
+  "artifact_record": "../releases/20261127-8e502d5a/manifest.json",
+  "base_archive": {
+    "file": "cpa-build-bases-20261127-arm64.tar.gz",
+    "bytes": 735240976,
+    "sha256": "6f36e08ef5e910ad30e68e86e37b1e8d20eb7e64614c33d393c10631078dbaa6",
+    "image_ids": [
+      "sha256:71b3ad37e0d202c5368ff149d2d79b653d6cd1aec8412628639892282a2d85c5",
+      "sha256:59a1275ed39b7ff42c2d1e419bccbfbc12febc62b67c3620923a5ad9edd97a5a"
+    ],
+    "registry_pushed": false,
+    "archive_identity_verification": [
+      {
+        "engine_image_id": "sha256:71b3ad37e0d202c5368ff149d2d79b653d6cd1aec8412628639892282a2d85c5",
+        "archive_config": "blobs/sha256/88b0fc28af6f61df2de960ecbead2d67175a2c99a03434f63a9d7959824e91ae",
+        "layers_and_runtime_configuration_match": true,
+        "id_kind": "local engine image identity; not assumed equal to archive config digest"
+      },
+      {
+        "engine_image_id": "sha256:59a1275ed39b7ff42c2d1e419bccbfbc12febc62b67c3620923a5ad9edd97a5a",
+        "archive_config": "blobs/sha256/3b9931fb4df3f8b13744e3effdaa20baa655902085c64dff4da0f43f43fd4bad",
+        "layers_and_runtime_configuration_match": true,
+        "id_kind": "local engine image identity; not assumed equal to archive config digest"
+      }
+    ],
+    "loaded_or_run": false
+  }
+}

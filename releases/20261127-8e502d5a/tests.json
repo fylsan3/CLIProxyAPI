@@ -1,0 +1,110 @@
+{
+  "source_commit": "8e502d5ae5ac030e3c1a30e7c9801941e09f7ed2",
+  "date": "2026-11-27 Asia/Tokyo",
+  "initial_batch_passed": false,
+  "affected_checks_passed_after_runner_fix": true,
+  "checks": {
+    "executor-billing-system": {
+      "initial_exit_code": 0,
+      "seconds": 10.48,
+      "local_log_name": "executor-billing-system.log",
+      "local_log_sha256": "bc217fd05ff62444894191b7b7564417621a3b813956bb30944f1f258db33e60",
+      "final_exit_code": 0,
+      "top_level_passes": 24
+    },
+    "container-platform-headers": {
+      "initial_exit_code": 0,
+      "seconds": 0.92,
+      "local_log_name": "container-platform-headers.log",
+      "local_log_sha256": "ba7d00757b81dc2ab6f296206399801724d8b6773dcefb63c0c9234e9c57d17f",
+      "final_exit_code": 0,
+      "top_level_passes": 4
+    },
+    "oauth-native-capture": {
+      "initial_exit_code": 1,
+      "seconds": 3.85,
+      "local_log_name": "oauth-native-capture.log",
+      "local_log_sha256": "2338040714faecc076de84bb92eb31641fd0b308ce1fc4f8af1af70f5a81c86a",
+      "final_exit_code": 0,
+      "recheck": {
+        "name": "oauth-native-capture",
+        "exit_code": 0,
+        "seconds": 1.42,
+        "change": "isolated Python report key only; Go tests and application unchanged",
+        "original_failure_preserved": true
+      },
+      "recheck_log_sha256": "2d24939719a23d0339557437db62f3e52900b70d7083cf6cfc1ec0caee099da6",
+      "fake_oauth_requests": 7,
+      "final_model_requests": 2
+    },
+    "protocol-A-B": {
+      "initial_exit_code": 0,
+      "seconds": 68.68,
+      "local_log_name": "protocol-A-B.log",
+      "local_log_sha256": "7e8a750270d18521e7e3de9fc5f47db17cb7bd5ca1cbce22287f1d63c6d41d85",
+      "final_exit_code": 0,
+      "cases": {
+        "native_catalog_all_models_routed_and_listed": true,
+        "large_ascii_unicode_gzip_and_chunked_requests": true,
+        "native_thinking_suffix_routes_without_python_reimplementation": true,
+        "image_large_tool_result_and_tool_use_preserved": true,
+        "large_reply_and_stream_byte_exact": true,
+        "native_upstream_count_tokens_each_account_byte_exact": true,
+        "count_cancellation_reaches_container_and_other_account_continues": true,
+        "native_size_limit_rejects_plain_and_decompressed_overflow_before_upstream": true,
+        "unknown_model_does_not_reach_upstream": true,
+        "large_error_byte_exact_and_other_model_still_available": true,
+        "count_error_body_byte_exact": true,
+        "single_authorization_no_trace_headers_and_no_dns_queries": true
+      }
+    },
+    "capture-A-B": {
+      "initial_exit_code": 0,
+      "seconds": 20.44,
+      "local_log_name": "capture-A-B.log",
+      "local_log_sha256": "72e7adbbb68670317ba7db206c0641beaeab62bab92a207152241d6d878cd780",
+      "final_exit_code": 0,
+      "cases": {
+        "raw_capture_and_replay_exact": true,
+        "captured_credentials_not_saved": true,
+        "actual_A_worker_outbound_compared": true,
+        "B_concurrent_request_unaffected": true,
+        "internal_marker_not_sent_upstream": true,
+        "native_payload_policy_retained": true,
+        "all_go_account_paths_captured": true,
+        "sanitized_container_export": true,
+        "before_after_policy_and_wire_comparison": true,
+        "capture_export_policy_digest_matches": true,
+        "normal_headers_no_false_alert": true,
+        "local_collector_exports_once_without_provider_calls": true
+      }
+    }
+  },
+  "test_tool_issue": {
+    "file": "tests/oauth_native_capture.py",
+    "cause": "Python summary read removed oauth_native_and_final_identical key; Go output uses policy_single_source",
+    "application_changes": false,
+    "isolated_fix_retested": true,
+    "archive_revision_applies_same_fix": true
+  },
+  "legacy_assertion_update": {
+    "file": "tests/egress_chain_cases.py",
+    "old": "account-egress-3-usage-headers",
+    "new": "account-egress-4-single-source",
+    "validation": "static comparison with existing policy; legacy scenario was not rerun",
+    "independent_expected_literal_preserved": true
+  },
+  "archival_task_reran_functional_tests": false,
+  "real_accounts_used": false,
+  "production_changed": false,
+  "existing_running_containers_checked": 7,
+  "existing_container_metadata_unchanged": true,
+  "test_resources_removed": true,
+  "not_verified": [
+    "official subscription compatibility",
+    "interactive browser CAPTCHA and QR flow",
+    "one-hour request",
+    "reset-grant consumption",
+    "target Linux host deployment"
+  ]
+}

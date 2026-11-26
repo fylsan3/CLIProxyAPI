@@ -1,4 +1,4 @@
-> 当前源码候选：container-native4（未部署）。NewAPI 对接、多协议与 OS/架构基线见 [NEWAPI_CONTAINER_INTEGRATION_CN.md](NEWAPI_CONTAINER_INTEGRATION_CN.md)。本机生产仍为上一发布版本；以下旧阶段记录供追溯。
+> 最新归档：见 [2026-11-27 编译、镜像与离线回归清单](releases/20261127-8e502d5a/README.md)。该记录对应隔离测试候选，不代表生产已更新。以下架构介绍含早期阶段说明，实际产物以归档清单为准。
 
 # CPA container runtime — source snapshot
 
@@ -15,7 +15,7 @@ Source release of the `mac-production3` container runtime and `accounts-ui12` ma
 
 ## Build prerequisites
 
-Set `CPA_BUILD_TOOLS` to a directory containing `go/` (Go 1.26.10) and the populated Go `modules/` cache. Dependency fetching is disabled by the build. Import the local pinned Docker base images listed in `base-images.json`; these images have not been published to a registry. This source snapshot does not include the toolchain, binaries, images, generated TLS keys, production settings, accounts, or raw capture data.
+Set `CPA_BUILD_TOOLS` to a directory containing `go/` (Go 1.26.10) and the populated Go `modules/` cache. Dependency fetching is disabled by the build. The historical default images in `base-images.json` are retained for traceability; some are no longer available locally. Use the explicit local base IDs and override options recorded in [the build profile](build-profiles/offline-20261127.json) and [its archive guide](releases/20261127-8e502d5a/README.md). Do not run the full build with unavailable historical defaults. These images have not been published to a registry. This source snapshot does not include the toolchain, binaries, images, generated TLS keys, production settings, accounts, or raw capture data.
 
 Run `python3 -B build.py --compile-only` to compile the worker, Mac/Linux ARM64 central server and config inspectors. Run `python3 -B build.py` with the required local Docker images available to build images, regenerate test certificates and generate the runtime integrity manifest. A source checkout is not directly launchable before the full build. Only use the unified build entrypoint.
 
