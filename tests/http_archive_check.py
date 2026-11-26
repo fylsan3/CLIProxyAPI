@@ -10,6 +10,8 @@ with tempfile.TemporaryDirectory(prefix='cpa-archive-test-') as tmp:
  (p/'archive.go').write_text((R/'src/cmd/server/offline_http_archive.go').read_text().replace('//go:build cpa_offline',''))
  source=(R/'src/cmd/server/offline_worker_entry.go').read_text();helpers=source[source.index('func safeFile('):source.index('func saveRecord(')]
  (p/'storage.go').write_text('package main\nimport("os";"syscall";"errors";"path/filepath")\n'+helpers)
+ (p/'session.go').write_text((R/'src/cmd/server/offline_capture_session.go').read_text().replace('//go:build cpa_offline',''))
+ (p/'policy.go').write_text((R/'src/cmd/server/offline_header_policy.go').read_text().replace('//go:build cpa_offline','')+'\nfunc containerPlatformHeaders()(string,string){return \"Linux\",\"arm64\"}\n')
  (p/'archive_test.go').write_text((R/'tests/http_archive_test.go').read_text())
  export=p/'export'
  env=dict(os.environ,GOROOT=str(T/'go'),GOCACHE='/tmp/cpa-archive-go-cache',GOPROXY='off',GOTOOLCHAIN='local',GOENV='off',ARCHIVE_TEST_EXPORT=str(export))

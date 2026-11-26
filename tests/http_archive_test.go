@@ -60,3 +60,23 @@ func TestHTTPArchiveChunkedUploadAndCompressedReply(t *testing.T){
  res,err:=a.send(req,http.DefaultTransport.RoundTrip);if err!=nil{t.Fatal(err)};got,err:=io.ReadAll(res.Body);res.Body.Close();if err!=nil||!bytes.Equal(got,zipped.Bytes()){t.Fatal("encoded reply changed")}
  if a.status()["state"]!="complete"{t.Fatal(a.status())};dir:=filepath.Join(a.dir,"0001");q:=readMeta(t,a,dir,"request.json.enc");if q["transfer_encoding"].([]any)[0]!="chunked"{t.Fatal("wire framing missing")};if !bytes.Equal(decryptTest(t,a.aead,filepath.Join(dir,"response.bin.enc")),zipped.Bytes()){t.Fatal("compressed bytes lost")}
 }
+
+func TestCaptureWindowAndHeaderAlarms(t *testing.T) {
+ root:=t.TempDir()
+ if captureWindowActive(root){t.Fatal("captured without opt in")}
+ p:=filepath.Join(root,"capture-window.json")
+ os.WriteFile(p,[]byte(`{"enabled":true,"expires":4102444800}`),0600)
+ if !captureWindowActive(root){t.Fatal("window not active")}
+ os.WriteFile(p,[]byte(`{"enabled":true,"expires":1}`),0600)
+ if captureWindowActive(root){t.Fatal("expired window active")}
+ h:=modelHeaderOverrides();wire:=[]map[string]any{}
+ for k,v:=range h{wire=append(wire,map[string]any{"name":k,"values":[]string{v}})}
+ wire=append(wire,map[string]any{"name":"Authorization","values":[]string{"Bearer do-not-export-canary"}})
+ bad,unknown:=auditHeaderNames("/v1/messages",wire);if len(bad)+len(unknown)!=0{t.Fatal(bad,unknown)}
+ wire=append(wire,map[string]any{"name":"User-Agent","values":[]string{"unexpected-client-canary"}},map[string]any{"name":"X-Unknown","values":[]string{"secret-extra-canary"}})
+ recordHeaderAudit(root,"sample","/v1/messages",wire,true)
+ b,_:=os.ReadFile(filepath.Join(root,"header-audit.json"))
+ for _,secret:=range []string{"do-not-export-canary","unexpected-client-canary","secret-extra-canary"}{if bytes.Contains(b,[]byte(secret)){t.Fatal("audit leaked value")}}
+ var v map[string]any;json.Unmarshal(b,&v);if len(v["alerts"].([]any))!=1{t.Fatal("missing alert")}
+ if !bytes.Contains(b,[]byte("user-agent"))||!bytes.Contains(b,[]byte("x-unknown")){t.Fatal("missing field names")}
+}

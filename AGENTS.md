@@ -29,3 +29,9 @@ Re-read user-edited source and compile only. Functional tests remain paused. No 
 
 ## Source save authorization — 2026-11-26
 User authorized committing and pushing this compile-only source snapshot to a separate branch. This does not authorize production deployment or real-account calls. Functional tests remain paused.
+
+## Cooldown direction A — 2026-11-26
+User selected preserving CPA routing/retry policy while repairing the worker/central bridge. Implement only in the candidate; compile without running functional tests, deploying, or calling real accounts. Keep reminding the user at the end of replies that reset-grant consumption remains pending; do not create a scheduled notification.
+
+## Latest authorization — production preparation 2026-11-26
+User now authorizes consolidated local tests, packaging and updating the local production release. Preserve account environments and credentials; no NewAPI changes. User will initiate real-account tests after readiness is reported. Capture Go account requests during an explicit test window; browser requests remain unchanged and outside this capture boundary. Only conservatively sanitized derived samples may enter samples/, never raw captures or keys.

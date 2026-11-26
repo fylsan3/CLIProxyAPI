@@ -2,6 +2,12 @@ package auth
 
 import "time"
 
+// Preserve native error classification across the private container boundary.
+// The bridge must not invent its own interpretation of subscription limits.
+func LocalProjectErrorHints(err error) (*time.Duration, bool, bool) {
+	return retryAfterFromError(err), isCredentialScopedError(err), isTransientRateLimitError(err)
+}
+
 // LocalProjectDispatchView is a read-only projection of the actual selector predicate.
 // It does not select, rotate, reset, or expose any credential fields.
 func LocalProjectDispatchView(a *Auth, model string, now time.Time) map[string]any {

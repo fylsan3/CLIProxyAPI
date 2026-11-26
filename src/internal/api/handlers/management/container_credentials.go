@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,7 @@ func (h *Handler) ContainerCredentials(c *gin.Context) {
 		// Worker publishes only explicitly sanitized, non-secret observations.
 		item["container_observation"] = project.State["account_observation"]
 		item["quota"] = project.State["quota_observation"]
+		item["container_dispatch"] = project.State["model_dispatch"]
 		item["container_capabilities"] = gin.H{"version": 1, "account_update": true, "token_refresh": true, "reset_grant": false, "reset_grant_read": true}
 		if !retry.IsZero() {
 			item["next_retry_after"] = retry
@@ -201,8 +203,50 @@ func (h *Handler) ContainerResetQuota(c *gin.Context) {
 		c.Status(503)
 		return
 	}
-	native := &Handler{authManager: p.manager}
-	native.ResetQuota(c)
+	var body struct {
+		AuthIndex string `json:"auth_index"`
+	}
+	if c.ShouldBindJSON(&body) != nil || strings.TrimSpace(body.AuthIndex) == "" {
+		c.JSON(400, gin.H{"error": "auth_index is required"})
+		return
+	}
+	var id, slug string
+	for _, a := range p.manager.List() {
+		if a.Index == strings.TrimSpace(body.AuthIndex) {
+			id, slug = a.ID, strings.TrimPrefix(a.ID, p.executor.namespace)
+			break
+		}
+	}
+	if id == "" || !validProjectSlug(slug) {
+		c.JSON(404, gin.H{"error": "auth not found"})
+		return
+	}
+	// Do not clear the central gate until the bound worker confirms its native
+	// reset was persisted. A failed/unknown worker operation remains retryable
+	// locally and must never be reported as a successful reset of both layers.
+	code, raw, err := h.containerMetadata(c.Request.Context(), "cooldown-reset", gin.H{"slug": slug})
+	if err != nil {
+		c.JSON(503, gin.H{"error": "container_cooldown_reset_unconfirmed", "central_cleared": false})
+		return
+	}
+	if code != 200 {
+		c.Data(code, "application/json", raw)
+		return
+	}
+	var receipt struct {
+		Status  string
+		Version int
+	}
+	if json.Unmarshal(raw, &receipt) != nil || receipt.Status != "ok" || receipt.Version != 1 {
+		c.JSON(502, gin.H{"error": "invalid_cooldown_reset_receipt", "central_cleared": false})
+		return
+	}
+	updated, models, err := p.manager.ResetQuota(c.Request.Context(), id)
+	if err != nil || updated == nil {
+		c.JSON(503, gin.H{"error": "central_cooldown_reset_pending", "container_cleared": true, "central_cleared": false})
+		return
+	}
+	c.JSON(200, gin.H{"status": "ok", "auth_index": body.AuthIndex, "models": models, "container_cleared": true, "central_cleared": true})
 }
 
 func (h *Handler) ContainerCredentialStatus(c *gin.Context) {

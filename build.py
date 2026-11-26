@@ -38,7 +38,7 @@ def build_control():
  manifest['ui_revision']='accounts-ui14'
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
-def build(images=True, runtime_base=None):
+def build(images=True, runtime_base=None, fixture_base=None):
  for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
  from build_inputs import verify_source
  verify_source(ROOT)
@@ -56,7 +56,7 @@ def build(images=True, runtime_base=None):
   if args==['./cmd/server']:cmd+=['-ldflags','-X main.Version=8.1.1-container-native7']
   if tags:cmd+=['-tags','cpa_offline']
   run(cmd+args,env,SOURCE);print('Built',out.relative_to(ROOT),flush=True)
- compile('linux',ROOT/'image/worker',[str(SOURCE/'cmd/server/offline_worker_entry.go'),str(SOURCE/'cmd/server/offline_refresh_controller.go'),str(SOURCE/'cmd/server/offline_sample_capture.go'),str(SOURCE/'cmd/server/offline_account_info.go'),str(SOURCE/'cmd/server/offline_http_archive.go'),str(SOURCE/'cmd/server/offline_header_policy.go'),str(SOURCE/'cmd/server/offline_network.go')],True)
+ compile('linux',ROOT/'image/worker',[str(SOURCE/'cmd/server/offline_worker_entry.go'),str(SOURCE/'cmd/server/offline_refresh_controller.go'),str(SOURCE/'cmd/server/offline_sample_capture.go'),str(SOURCE/'cmd/server/offline_account_info.go'),str(SOURCE/'cmd/server/offline_http_archive.go'),str(SOURCE/'cmd/server/offline_header_policy.go'),str(SOURCE/'cmd/server/offline_network.go'),str(SOURCE/'cmd/server/offline_capture_session.go')],True)
  compile('linux',ROOT/'central/cli-proxy-api-linux-arm64',['./cmd/server'])
  compile('darwin',ROOT/'central/cli-proxy-api',['./cmd/server'])
  virtual=SOURCE/'cmd/environment-config/main.go'
@@ -69,7 +69,7 @@ def build(images=True, runtime_base=None):
  base=json.loads((ROOT/'base-images.json').read_text())
  with tempfile.TemporaryDirectory(prefix='cpa-unified-image-') as folder:
   p=Path(folder);shutil.copy2(ROOT/'image/worker',p/'worker');(p/'worker').chmod(0o755)
-  runtime_files={'browser_worker.py':'/opt/sample/worker.py','http_archive.py':'/opt/native/http_archive.py','bundle_io.py':'/opt/native/bundle_io.py','entry.py':'/opt/native/entry.py','network_boot.py':'/opt/native/network_boot.py','network_gate.py':'/opt/native/network_gate.py','locale_probe.py':'/opt/native/locale_probe.py','browser_resources.py':'/opt/native/browser_resources.py'}
+  runtime_files={'browser_worker.py':'/opt/sample/worker.py','http_archive.py':'/opt/native/http_archive.py','sample_export.py':'/opt/native/sample_export.py','bundle_io.py':'/opt/native/bundle_io.py','entry.py':'/opt/native/entry.py','network_boot.py':'/opt/native/network_boot.py','network_gate.py':'/opt/native/network_gate.py','locale_probe.py':'/opt/native/locale_probe.py','browser_resources.py':'/opt/native/browser_resources.py'}
   instructions='FROM '+(runtime_base or base['id'])+'\nCOPY --chown=1001:1001 worker /opt/native/worker\n'
   for name,destination in runtime_files.items():
    shutil.copy2(ROOT/'image'/name,p/name);instructions+='COPY --chown=1001:1001 '+name+' '+destination+'\n'
@@ -79,7 +79,7 @@ def build(images=True, runtime_base=None):
  from prepare_test_certificates import prepare
  prepare()
  tls=run(cli+['build','--network','none','--build-arg','BASE='+image,'-q',str(ROOT/'tls-test')])
- fixture=run(cli+['build','--network','none','--build-arg','BASE='+base['tls_fixture'],'-q',str(ROOT/'tls-fixture')])
+ fixture=run(cli+['build','--network','none','--build-arg','BASE='+(fixture_base or base['tls_fixture']),'-q',str(ROOT/'tls-fixture')])
  base.update(id=image,tls_test=tls,tls_fixture=fixture,worker_sha256=digest(ROOT/'image/worker'),published=False)
  (ROOT/'image.json').write_text(json.dumps(base,indent=2)+'\n')
  files={}
@@ -90,6 +90,6 @@ def build(images=True, runtime_base=None):
  (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'container-native7','build_runtime_base':runtime_base or base['id'],'published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':False,'container_derived_headers':['X-Stainless-OS','X-Stainless-Arch'],'other_manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
- parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');parser.add_argument('--fixture-base',help='Existing local fixture build base');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()
  if args.control_only:build_control()
- else:build(not args.compile_only,args.runtime_base)
+ else:build(not args.compile_only,args.runtime_base,args.fixture_base)

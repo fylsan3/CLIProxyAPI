@@ -64,10 +64,18 @@ def run():
    # Intentionally start the older container runtime while using this test controller.
    import shutil,os
    oldroot=state/'old-release';oldroot.mkdir()
-   manifest=json.loads((ROOT/'release-manifest.json').read_text())
+   import plistlib
+   live=plistlib.loads((Path.home()/'Library/LaunchAgents/com.local.cliproxyapi.plist').read_bytes())
+   live_root=Path(live['ProgramArguments'][2]).parent
+   manifest=json.loads((live_root/'release-manifest.json').read_text())
    for name in manifest['files']:
-    src=ROOT/name;dst=oldroot/name;dst.parent.mkdir(parents=True,exist_ok=True);os.link(src,dst)
-   old_images=json.loads((Path.home()/'Library/Application Support/CPAContainer/releases/mac-production1/image.json').read_text())
+    src=live_root/name;dst=oldroot/name;dst.parent.mkdir(parents=True,exist_ok=True);os.link(src,dst)
+   old_images=json.loads((live_root/'image.json').read_text())
+   # Add only this closed fixture CA; no account volume or credentials are mounted.
+   old_build=subprocess.run(CLI+['build','--network','none','--build-arg','BASE='+old_images['id'],'-q',str(ROOT/'tls-test')],capture_output=True,text=True,timeout=90,check=True)
+   old_images['tls_test']=old_build.stdout.strip()
+   assert old_images['tls_test'].startswith('sha256:') and len(old_images['tls_test'])==71
+   old_images['tls_fixture']=images['tls_fixture']
    (oldroot/'image.json').unlink();(oldroot/'image.json').write_text(json.dumps(old_images))
    manifest['images']={k:old_images[k] for k in ['id','tls_test','tls_fixture']};manifest['files']['image.json']=hashlib.sha256((oldroot/'image.json').read_bytes()).hexdigest()
    (oldroot/'release-manifest.json').write_text(json.dumps(manifest))

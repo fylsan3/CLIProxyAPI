@@ -7,7 +7,7 @@ from storage_guard import private_directory,private_file,prepare_socket,socket_p
 from lifecycle import Lease,RequestWatch,finish_process
 from accounting import UsageObserver,native_usage_observation,summarize
 from message_body import read_message
-from header_policy import request_headers,response_headers
+from header_policy import request_headers,response_headers,cooldown_receipt_headers
 from version import release_info
 from account_registry import Registry,PROVIDERS
 from account_identity import owner_for,valid_slug
@@ -185,6 +185,15 @@ class Broker:
                 self.protection.phase(owner,'backup_failed',backup_verified=False)
                 return 503,{'error':{'message':'environment_backup_required'}}
     def admin(self,action,body,connection=None):
+        if action=='cooldown-reset':
+            if set(body)!={'slug'}:raise PolicyError('invalid_request')
+            owner=self.registry.get(body.get('slug',''))['owner']
+            try:
+                with self.gate.maintenance(owner):
+                    return self.invoke(owner,'/auth/cooldown/reset',{},connection)
+            except ValueError as error:
+                if str(error) in ('account_maintenance','account_busy'):return 409,{'error':str(error)}
+                raise
         protected={'refresh-check','refresh-execute','auth-begin','auth-cancel','open-browser','close-browser','retry-backup','backup-restore','account-update'}
         if action in protected:
             owner=self.registry.get(body.get('slug',''))['owner']
@@ -363,6 +372,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_response_only(status)
                 for key,values in response_headers(headers).items():
                     for value in values:self.send_header(key,value)
+                if status>=400:
+                    for key,values in cooldown_receipt_headers(headers).items():
+                        for value in values:self.send_header(key,value)
                 self.send_header('X-Test-Container',ident);self.send_header('X-Test-Attempt',attempt)
                 if chunked:self.send_header('Transfer-Encoding','chunked');self.send_header('Trailer','X-Offline-Native-Usage')
                 elif native_usage:self.send_header('X-Offline-Native-Usage',native_usage)

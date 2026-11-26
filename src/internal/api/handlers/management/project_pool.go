@@ -67,14 +67,18 @@ type projectExecutor struct {
 	configSource func() *config.Config
 }
 type projectHTTPError struct {
-	status  int
-	body    []byte
-	headers http.Header
+	status   int
+	body     []byte
+	headers  http.Header
+	cooldown util.ContainerCooldownHint
 }
 
-func (e *projectHTTPError) Headers() http.Header { return e.headers.Clone() }
-func (e *projectHTTPError) Error() string        { return string(e.body) }
-func (e *projectHTTPError) StatusCode() int      { return e.status }
+func (e *projectHTTPError) Headers() http.Header       { return util.ContainerResponseHeaders(e.headers) }
+func (e *projectHTTPError) Error() string              { return string(e.body) }
+func (e *projectHTTPError) StatusCode() int            { return e.status }
+func (e *projectHTTPError) RetryAfter() *time.Duration { return e.cooldown.RetryAfter() }
+func (e *projectHTTPError) IsCredentialScoped() bool   { return e.cooldown.CredentialScoped }
+func (e *projectHTTPError) IsTransientRateLimit() bool { return e.cooldown.TransientRateLimit }
 
 var projectPools sync.Map
 
@@ -322,7 +326,7 @@ func (e *projectExecutor) request(ctx context.Context, a *coreauth.Auth, r execu
 		if readErr != nil {
 			return nil, readErr
 		}
-		return nil, &projectHTTPError{status: res.StatusCode, body: body, headers: res.Header.Clone()}
+		return nil, &projectHTTPError{status: res.StatusCode, body: body, headers: res.Header.Clone(), cooldown: util.ReadContainerCooldownHint(res.Header, time.Now())}
 	}
 	return res, nil
 }

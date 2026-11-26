@@ -16,7 +16,7 @@ def migrate(state,owner):
   control=Control(folder/'environments');old=read_json(control.card(owner));info=control.inspect(old)
   # The old container is inspected against its own immutable card, never admitted by the new pool.
   current=health(old)
-  if current.get('active_calls') or current.get('refreshing') or current.get('authorization_pending'):raise ValueError('account_busy')
+  if current.get('active_calls') or current.get('refreshing') or current.get('account_updating') or current.get('authorization_pending'):raise ValueError('account_busy')
   if not current.get('authorized'):raise ValueError('existing_authorization_required')
   old_protection=read_json(control.folder/('protection-'+owner+'.json'))
   if not old_protection.get('backup_verified'):raise ValueError('verified_backup_required')

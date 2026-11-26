@@ -88,6 +88,8 @@ def run():
     action('create',owner,proxy_url='socks5h://test-'+owner+':fixture-password-'+owner+'@'+ip+':'+str(specs[owner]['proxy_port']))
     cards[owner]=json.loads((state/'broker-private/environments'/(owner+'.json')).read_text())
     wait(lambda:worker(owner,'/health')[0]==200)
+    arm="from pathlib import Path;import os,json,time;p=Path('/state/capture-window.json');p.write_text(json.dumps({'enabled':True,'expires':int(time.time())+3600}));p.chmod(0o600)"
+    docker('exec','--user','1001:1001',cards[owner]['container'],'python3','-B','-c',arm)
     code,pending=worker(owner,'/auth/begin');assert code==200
     assert urlsplit(pending['authorization_url']).netloc=='claude.ai'
     p=subprocess.run(CLI+['exec','--user','1001:1001','-i',cards[owner]['container'],'python3','-B','-c',AUTHORIZE],input=json.dumps({'url':pending['authorization_url']}),text=True,capture_output=True,timeout=30)
@@ -172,6 +174,30 @@ def run():
     report['actual_outbound']={'first':first,'replayed':second}
     report['replay']=result
    finally:proxy.shutdown();proxy.server_close()
+   for owner in ('A','B'):
+    action('account-update',owner)
+    captured=json.loads(docker('exec','--user','1001:1001',cards[owner]['container'],'python3','-B','/opt/native/sample_export.py'))
+    paths={x['request']['path'] for x in captured['samples']}
+    assert {'/v1/oauth/token','/api/oauth/profile','/api/oauth/claude_cli/roles','/api/oauth/usage','/v1/messages'}<=paths,paths
+    assert not captured['pending'],captured['pending']
+    observed=worker(owner,'/health')[1]['capture_audit']
+    assert observed['capture_active'] and observed['observed_requests']>=len(captured['samples'])
+    assert not observed.get('alerts'),observed
+    (ROOT/'evidence'/('window-capture-'+owner+'.json')).write_text(json.dumps(captured,indent=2))
+   report['cases']['all_go_account_paths_captured']=True
+   report['cases']['sanitized_container_export']=True
+   report['cases']['normal_headers_no_false_alert']=True
+   from capture_watch import watch as collect
+   monitor=state/'monitor.json';dest=state/'sanitized-source-samples'
+   monitor.write_text(json.dumps({'expires':int(time.time())+3600,'accounts':{o:{'environment_id':cards[o]['environment_id'],'skip':[],'exported':[],'alert_signatures':[]} for o in ('A','B')}}))
+   collect(state,dest,monitor,once=True)
+   rows=json.loads(monitor.read_text())['accounts'];assert all(not v.get('error') and v['exported'] for v in rows.values()),rows
+   files=list(dest.glob('*.json'));assert files
+   previous={p.name:p.read_bytes() for p in files};collect(state,dest,monitor,once=True)
+   assert previous=={p.name:p.read_bytes() for p in dest.glob('*.json')}
+   report['cases']['local_collector_exports_once_without_provider_calls']=True
+
+
 
   except BaseException:
    diagnostic={'error':traceback.format_exc(),'cases':report['cases']}

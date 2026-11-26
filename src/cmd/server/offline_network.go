@@ -81,9 +81,38 @@ func newAccountNetwork(c accountNetworkConfig) *accountNetwork {
 
 // Only this process (UID 1002) is permitted by the kernel to contact the bound
 // SOCKS peer. Numeric peer addressing never invokes the container DNS resolver.
+// x/net SOCKS wraps net.Conn and hides TCP CloseWrite. Retain the underlying
+// TCP connection so EOF in one direction does not deadlock the other direction.
+type halfCloseDialer struct {
+	net.Dialer
+	raw net.Conn
+}
+
+func (d *halfCloseDialer) Dial(network, address string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, address)
+}
+func (d *halfCloseDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	c, e := d.Dialer.DialContext(ctx, network, address)
+	d.raw = c
+	return c, e
+}
+
+type halfCloseConn struct {
+	net.Conn
+	raw net.Conn
+}
+
+func (c *halfCloseConn) CloseWrite() error {
+	if w, ok := c.raw.(interface{ CloseWrite() error }); ok {
+		return w.CloseWrite()
+	}
+	return errors.New("half_close_unsupported")
+}
+
 func (n *accountNetwork) dial(ctx context.Context, destination string) (net.Conn, error) {
+	forward := &halfCloseDialer{Dialer: net.Dialer{Timeout: 7 * time.Second}}
 	d, err := proxy.SOCKS5("tcp", net.JoinHostPort(n.config.ProxyIP, strconv.Itoa(n.config.ProxyPort)),
-		&proxy.Auth{User: n.config.Username, Password: n.config.Password}, &net.Dialer{Timeout: 7 * time.Second})
+		&proxy.Auth{User: n.config.Username, Password: n.config.Password}, forward)
 	if err != nil {
 		return nil, errors.New("invalid_proxy_config")
 	}
@@ -104,7 +133,7 @@ func (n *accountNetwork) dial(ctx context.Context, destination string) (net.Conn
 		}
 		return nil, errors.New("proxy_connection_failed")
 	}
-	return conn, nil
+	return &halfCloseConn{Conn: conn, raw: forward.raw}, nil
 }
 
 func (n *accountNetwork) probeHTTP(ctx context.Context, endpoint, kind string) ([]byte, error) {

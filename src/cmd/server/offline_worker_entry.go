@@ -63,22 +63,24 @@ type pendingAuth struct {
 	Cancel     context.CancelFunc
 }
 type worker struct {
-	owner              string
-	authorizationIssue string
-	mu                 sync.Mutex
-	record             *tokenRecord
-	pending            *pendingAuth
-	service            *claudeauth.ClaudeAuth
-	executor           *native.ClaudeExecutor
-	transport          *providerTransport
-	storageFailed      bool
-	activeCalls        atomic.Int64
-	accountUpdating    atomic.Bool
-	renewing           atomic.Bool
-	manager            *coreauth.Manager
-	store              *accountStore
-	persist            func(*tokenRecord) error
-	renew              func(context.Context, string) (*claudeauth.ClaudeTokenData, error)
+	owner                string
+	authorizationIssue   string
+	mu                   sync.Mutex
+	cooldownMu           sync.Mutex
+	record               *tokenRecord
+	pending              *pendingAuth
+	service              *claudeauth.ClaudeAuth
+	executor             *native.ClaudeExecutor
+	transport            *providerTransport
+	storageFailed        bool
+	activeCalls          atomic.Int64
+	accountUpdating      atomic.Bool
+	cooldownResetPending atomic.Bool
+	renewing             atomic.Bool
+	manager              *coreauth.Manager
+	store                *accountStore
+	persist              func(*tokenRecord) error
+	renew                func(context.Context, string) (*claudeauth.ClaudeTokenData, error)
 }
 
 // Test requests use a local SOCKS adapter; the kernel only allows the bound mock proxy.
@@ -211,7 +213,15 @@ func (t *providerTransport) send(request, source *http.Request) (*http.Response,
 	var res *http.Response
 	var err error
 	next := t.base.RoundTrip
-	if archive, ok := source.Context().Value(httpArchiveKey{}).(*httpArchive); ok {
+	archive, _ := source.Context().Value(httpArchiveKey{}).(*httpArchive)
+	if archive == nil && captureWindowActive("/state") {
+		var archiveErr error
+		archive, archiveErr = newHTTPArchive("/state", "account-test-window")
+		if archiveErr != nil {
+			recordCaptureIssue("/state", "archive_create_failed")
+		}
+	}
+	if archive != nil {
 		next = func(r *http.Request) (*http.Response, error) { return archive.send(r, t.base.RoundTrip) }
 	}
 	if sample, ok := source.Context().Value(modelSampleKey{}).(*modelSample); ok && (source.URL.Path == "/v1/messages" || source.URL.Path == "/v1/messages/count_tokens") {
@@ -397,6 +407,7 @@ func localError(out http.ResponseWriter, status int, code string) {
 func (w *worker) status() map[string]any {
 	data := map[string]any{"authorization_issue": w.authorizationIssue, "owner": w.owner, "container": os.Getenv("HOSTNAME"), "authorized": false, "revision": 0, "active_calls": w.activeCalls.Load(), "authorization_pending": w.pending != nil && time.Now().Before(w.pending.Expires), "offline_only": os.Getenv("CPA_PROVIDER") != "claude-subscription", "refreshing": w.renewing.Load(), "storage_failed": w.storageFailed, "storage_warning": w.store.failed.Load()}
 	data["egress_policy"] = accountHeaderPolicyVersion
+	data["capture_audit"] = captureAuditStatus("/state")
 	data["resources"] = accountResourceSnapshot()
 	auth, ok := w.manager.GetByID(w.authID())
 	if !ok {
@@ -448,7 +459,15 @@ func (w *worker) status() map[string]any {
 		}
 	}
 	data["dispatch_issue"] = issue
+	if w.cooldownResetPending.Load() {
+		data["dispatch_issue"] = "cooldown_reset_unconfirmed"
+	}
 	data["model_dispatch_issues"] = modelIssues
+	cooldown := map[string]any{}
+	for _, m := range registry.GetGlobalRegistry().GetModelsForClient(auth.ID) {
+		cooldown[m.ID] = coreauth.LocalProjectDispatchView(auth, m.ID, time.Now())
+	}
+	data["model_dispatch"] = cooldown
 	if !auth.LastRefreshedAt.IsZero() {
 		data["last_refresh"] = auth.LastRefreshedAt.Format(time.RFC3339)
 	}
@@ -464,6 +483,10 @@ func (w *worker) status() map[string]any {
 	return data
 }
 func (w *worker) authHandler(out http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/auth/cooldown/reset" {
+		w.resetCooldown(out, req)
+		return
+	}
 	if req.URL.Path == "/auth/account-update" {
 		w.updateAccount(out, req)
 		return
@@ -722,6 +745,44 @@ func (w *worker) checkpoint() {
 		_, _ = w.store.Save(context.Background(), a)
 	}
 }
+
+// Reset only local CPA scheduling state. No token refresh, upstream request or
+// reset-grant consumption occurs here. Active model responses are never cut off.
+func (w *worker) resetCooldown(out http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		localError(out, 405, "method_not_allowed")
+		return
+	}
+	w.cooldownMu.Lock()
+	defer w.cooldownMu.Unlock()
+	if w.activeCalls.Load() != 0 || w.renewing.Load() || w.accountUpdating.Load() {
+		localError(out, 409, "account_busy")
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.storageFailed {
+		localError(out, 503, "credential_save_failed")
+		return
+	}
+	if err := networkCheck(); err != nil {
+		localError(out, 503, "account_proxy_unavailable")
+		return
+	}
+	w.cooldownResetPending.Store(true)
+	a, models, err := w.manager.ResetQuota(req.Context(), w.authID())
+	if err != nil {
+		localError(out, 503, "cooldown_reset_save_failed")
+		return
+	}
+	if a == nil {
+		w.cooldownResetPending.Store(false)
+		localError(out, 404, "authorization_required")
+		return
+	}
+	w.cooldownResetPending.Store(false)
+	response(out, 200, map[string]any{"status": "ok", "version": 1, "owner": w.owner, "models": models, "state": w.status()})
+}
 func (w *worker) refreshLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -736,6 +797,15 @@ func (w *worker) refreshLoop(ctx context.Context) {
 }
 
 func nativeError(out http.ResponseWriter, err error, observed ...http.Header) {
+	// The receipt is generated from CPA's classified error, never copied from
+	// upstream headers. It is stripped again before any public client response.
+	delay, credential, transient := coreauth.LocalProjectErrorHints(err)
+	out.Header().Set(util.ContainerCooldownBridge, "1")
+	if delay != nil {
+		out.Header().Set(util.ContainerRetryAt, time.Now().Add(*delay).UTC().Format(time.RFC3339Nano))
+	}
+	out.Header().Set(util.ContainerCredentialScope, fmt.Sprint(credential))
+	out.Header().Set(util.ContainerTransientRateLimit, fmt.Sprint(transient))
 	var headers http.Header
 	if len(observed) > 0 {
 		headers = observed[0]
@@ -781,6 +851,11 @@ func copyHeaders(out http.ResponseWriter, headers http.Header) {
 
 // Each request keeps its own auth snapshot; refresh does not gate model calls.
 func (w *worker) beginCall(ctx context.Context, model string) (*coreauth.Auth, error) {
+	w.cooldownMu.Lock()
+	defer w.cooldownMu.Unlock()
+	if w.cooldownResetPending.Load() {
+		return nil, errors.New("cooldown_reset_unconfirmed")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -1048,7 +1123,7 @@ func call() error {
 		return err
 	}
 	switch input.Path {
-	case "/health", "/auth/account-update", "/auth/refresh-check", "/auth/begin", "/auth/complete", "/auth/cancel", "/auth/refresh", "/v1/messages", "/v1/messages/count_tokens":
+	case "/health", "/auth/account-update", "/auth/refresh-check", "/auth/begin", "/auth/complete", "/auth/cancel", "/auth/refresh", "/auth/cooldown/reset", "/v1/messages", "/v1/messages/count_tokens":
 	default:
 		return errors.New("unknown_action")
 	}

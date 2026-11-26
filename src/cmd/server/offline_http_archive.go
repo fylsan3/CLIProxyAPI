@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -27,6 +28,7 @@ import (
 type httpArchiveKey struct{}
 type httpArchive struct {
 	dir, id, kind string
+	root          string
 	aead          cipher.AEAD
 	mu            sync.Mutex
 	next          int
@@ -49,7 +51,15 @@ func privateArchiveDir(path string) error {
 	}
 	return nil
 }
+func captureStorageAvailable(path string) bool {
+	var info syscall.Statfs_t
+	return syscall.Statfs(path, &info) == nil && uint64(info.Bavail)*uint64(info.Bsize) > 512*1024*1024
+}
 func newHTTPArchive(root, kind string) (*httpArchive, error) {
+	if !captureStorageAvailable(root) {
+		return nil, errors.New("capture_storage_reserve")
+	}
+
 	archiveKeyMu.Lock()
 	defer archiveKeyMu.Unlock()
 	keyPath := filepath.Join(root, "http-capture.key")
@@ -84,7 +94,7 @@ func newHTTPArchive(root, kind string) (*httpArchive, error) {
 	if _, err = rand.Read(id); err != nil {
 		return nil, err
 	}
-	s := &httpArchive{id: hex.EncodeToString(id), kind: kind, aead: aead}
+	s := &httpArchive{root: root, id: hex.EncodeToString(id), kind: kind, aead: aead}
 	s.dir = filepath.Join(base, s.id)
 	if err = os.Mkdir(s.dir, 0700); err != nil {
 		return nil, err
@@ -109,10 +119,11 @@ func (s *httpArchive) status() map[string]any {
 // Each record is independently authenticated, with an authenticated empty final
 // record. Missing/truncated chunks cannot be mistaken for a complete file.
 type archiveFile struct {
-	f    *os.File
-	aead cipher.AEAD
-	aad  []byte
-	err  error
+	f       *os.File
+	aead    cipher.AEAD
+	aad     []byte
+	err     error
+	written int64
 }
 
 func (s *httpArchive) file(path string) *archiveFile {
@@ -127,6 +138,11 @@ func (w *archiveFile) chunk(p []byte) {
 	if w.err != nil {
 		return
 	}
+	if w.f != nil && w.written/(1024*1024) != (w.written+int64(len(p)))/(1024*1024) && !captureStorageAvailable(filepath.Dir(w.f.Name())) {
+		w.err = errors.New("capture_storage_reserve")
+		return
+	}
+	w.written += int64(len(p))
 	nonce := make([]byte, w.aead.NonceSize())
 	if _, w.err = rand.Read(nonce); w.err != nil {
 		return
@@ -253,6 +269,7 @@ func (s *httpArchive) send(original *http.Request, next func(*http.Request) (*ht
 			writes++
 			meta["write_attempts"] = writes
 			meta["write_succeeded"] = info.Err == nil
+			recordHeaderAudit(s.root, s.id, original.URL.Path, wire, info.Err == nil)
 			if writes > 1 {
 				s.failed.Store(true)
 			}
@@ -279,6 +296,7 @@ func (s *httpArchive) send(original *http.Request, next func(*http.Request) (*ht
 			meta["complete"] = complete
 			meta["trailers"] = original.Trailer.Clone()
 			if !complete {
+				recordCaptureIssue(s.root, "request_capture_incomplete")
 				s.failed.Store(true)
 			}
 			writeRequest()
@@ -307,6 +325,7 @@ func (s *httpArchive) send(original *http.Request, next func(*http.Request) (*ht
 		record["complete"] = complete
 		record["trailers"] = res.Trailer.Clone()
 		if !complete {
+			recordCaptureIssue(s.root, "response_capture_incomplete")
 			s.failed.Store(true)
 		}
 		s.record(filepath.Join(dir, "response.json.enc"), record)

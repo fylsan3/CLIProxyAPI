@@ -19,7 +19,7 @@ def deploy():
  before=snapshot();projects=before['projects']
  if not projects:raise ValueError('existing_accounts_required')
  for p in projects:
-  if not p.get('state',{}).get('authorized') or p['state'].get('active_calls') or p['state'].get('refreshing') or p['state'].get('authorization_pending'):raise ValueError('account_not_idle')
+  if not p.get('state',{}).get('authorized') or p['state'].get('active_calls') or p['state'].get('refreshing') or p['state'].get('account_updating') or p['state'].get('authorization_pending'):raise ValueError('account_not_idle')
  cfg=state/'config.yaml';cfg_hash=hashlib.sha256(cfg.read_bytes()).hexdigest()
  release_info()
  release=home/'releases'/(VERSION+'-'+str(int(time.time())));copy_release(ROOT,release)
