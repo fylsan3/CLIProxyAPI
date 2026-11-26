@@ -1,40 +1,27 @@
 # Container runtime working rules
 
-Read `UPGRADE_POLICY_CN.md` before changing or releasing the Go executor. Check the latest official Claude Code release at the time of an upgrade; distinguish protocol compatibility from client/runtime identity declarations. Do not copy identity, account, session, device identifiers or credentials from another client. Do not rewrite customer content to resemble a different environment.
+## 来源分类与本次任务
 
-Keep `source/` unchanged: it is verified against `source-inputs.json`. Use reviewed overlays in `src/` and update `overlay-inputs.json` when needed. Keep manually edited headers intact unless the user explicitly requests a compatible change. Never publish account data, generated keys, captures, production configurations or runtime state.
+先读 [文档来源与历史索引](DOCUMENT_PROVENANCE_CN.md)。区分用户明确要求、助手实施规则、技术事实和历史阶段记录；不能把助手对用途或风险的判断写成用户要求。旧阶段限制不能否定用户后来的明确授权。
 
-Run focused tests for affected behavior. A mock capture does not verify official subscription endpoints. Record real-account cases still awaiting validation. Production migration, deployment and real-account calls require their corresponding authorization; a source commit does not constitute deployment.
+本次用户仅授权整理文档：不修改程序源码、构建配置和生产，不构建、不部署、不调用账号，不自行提交推送。这是本轮任务范围，后续任务以实际指令为准。
 
-Use `build.py` as the unified build entrypoint. This snapshot is ARM64-only and relies on local Docker base images. See `README.md` and `RELEASE_STATUS_CN.md` for build and deployment limitations.
+## 用户明确要求（归纳）
 
-## Account request scope — 2026-11-26
+- 执行器升级优先核对官方最新版 Claude Code 请求参数；原话见 UPGRADE_POLICY_CN.md。
+- 保留用户手改请求头；未指定修改的部分参考 CPA 原有处理，不默默增加例外。账号请求范围包括 OAuth、刷新、profile、roles、usage、模型和重置卡相关操作。
+- 保留账号环境和凭据；需要真实验收时按该次授权执行，不能用历史阶段要求反复登录或擅自更换环境。
+- 一次完成可独立处理的工作，集中回归受影响部分，减少重复确认。已有明确授权不重复索取。
+- 浏览器处理暂保持原样，在后续项目回复中提醒检查登录、验证、回调和浏览器请求头；保留一小时任务及重置卡待办提醒。只在对话中提醒，不创建自动提醒。
 
-Follow `ACCOUNT_REQUEST_INVENTORY_CN.md` for account request coverage and explicit field differences. OAuth, token refresh, profile, roles, usage and reset-card operations belong to this scope; do not leave undocumented exceptions. Distinguish existing behavior from implemented changes and from observed wire results.
+## 助手实施规则与工程选择（不是用户原话）
 
-Browser request handling stays unchanged for now. At the end of subsequent project replies, remind the user that browser login/verification/callback and browser header handling still need review, until explicitly canceled or accepted. Keep the one-hour task acceptance reminder too. These are conversational reminders, not scheduled automations.
+- 修改或发布执行器前读 UPGRADE_POLICY_CN.md；核对实际最新版，区分功能协议、客户端声明和运行时。不要复制其他客户端/账号的具体身份、会话、设备标识或凭据，不改写客户内容来呈现另一环境。这是助手实施边界，不是对用户用途的定性。
+- 冻结 source/，用 src/ 与 overlay-inputs.json 管理实现改动，以 build.py 为统一构建入口。此实现选择不是用户逐项指定的要求。
+- 保留未提交的用户改动；不得为让断言通过而擅自改动用户实现。只运行该轮授权范围内且与变更有关的验证；本地模拟不能证明官方订阅端点已验收。
+- 账号数据、凭据、密钥、未脱敏采样和生产状态不进仓库。源码提交与部署结果分别报告；文档修改本身不是部署授权，也不能抹去已经给出的授权。
+- 平台支持、镜像、工具链与生产状态以对应证据为准；README/历史发布文档不能自动视为当前机器的验收结果。
 
-The current candidate must not be published; existing accounts and NewAPI must remain untouched. Updating this inventory does not authorize changing header values or production behavior.
+## 历史阶段
 
-## Test scheduling — latest user instruction, 2026-11-26
-
-Pause new test runs now; accumulate affected cases for the later consolidated test phase. Do not run tests after each individual edit or repeatedly ask to test each step. One local OAuth wire capture completed before this instruction arrived; preserve that result without rerunning it. Current OAuth restoration is in source only; the runtime image has not been rebuilt for it. No production or existing-account changes.
-
-## Current authorization
-
-User authorized consolidated isolated tests and local test-image packaging for this snapshot. Production, existing accounts, NewAPI and real-account calls remain excluded. Do not alter user runtime source to satisfy assertions.
-
-## Latest instruction — 2026-11-26
-Re-read user-edited source and compile only. Functional tests remain paused. No production deployment, real-account calls or NewAPI changes. Previous evidence does not validate this new revision.
-
-## Source save authorization — 2026-11-26
-User authorized committing and pushing this compile-only source snapshot to a separate branch. This does not authorize production deployment or real-account calls. Functional tests remain paused.
-
-## Cooldown direction A — 2026-11-26
-User selected preserving CPA routing/retry policy while repairing the worker/central bridge. Implement only in the candidate; compile without running functional tests, deploying, or calling real accounts. Keep reminding the user at the end of replies that reset-grant consumption remains pending; do not create a scheduled notification.
-
-## Latest authorization — production preparation 2026-11-26
-User now authorizes consolidated local tests, packaging and updating the local production release. Preserve account environments and credentials; no NewAPI changes. User will initiate real-account tests after readiness is reported. Capture Go account requests during an explicit test window; browser requests remain unchanged and outside this capture boundary. Only conservatively sanitized derived samples may enter samples/, never raw captures or keys.
-
-## Latest authorization — single policy deployment
-User authorized local production deployment preserving account environment/credentials and leaving NewAPI unchanged. Enable bounded header monitoring and before/after sampling; user initiates real requests. Do not make real model, manual refresh or reset-grant calls for readiness checks.
+原文中的“候选不发布”“暂停测试”“只编译”“只提交”以及后来的生产发布授权，已移至 [历史记录](docs/history/20261126-document-context.md)。它们只说明各自阶段，不是当前同时生效的一组禁令。有关近期拒绝发布的助手判断，单列在 DOCUMENT_PROVENANCE_CN.md，不归到用户要求中。
