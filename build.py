@@ -5,6 +5,8 @@ ROOT=Path(__file__).resolve().parent
 SOURCE=ROOT/'source'
 TOOL=Path(os.environ.get('CPA_BUILD_TOOLS',str(ROOT/'.build-tools'))).resolve()
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+def mutable_sample(name):
+ return name.startswith(('samples/captured/','samples/reviews/'))
 def run(cmd,env=None,cwd=None):
  p=subprocess.run(cmd,cwd=cwd,env=env,text=True,capture_output=True)
  if p.returncode:print(p.stdout+p.stderr,flush=True);p.check_returncode()
@@ -27,6 +29,7 @@ def build_control():
  from build_inputs import verify_source
  verify_source(ROOT);check_overrides()
  manifest=json.loads((ROOT/'release-manifest.json').read_text())
+ manifest['files']={n:h for n,h in manifest['files'].items() if not mutable_sample(n)}
  def allowed(name):
   p=Path(name)
   return (len(p.parts)==1 and p.suffix=='.py') or (p.parts[0]=='ui' and p.suffix in ('.js','.css','.html')) or name=='static/management.local.html'
@@ -40,6 +43,34 @@ def build_control():
  manifest['ui_revision']='accounts-ui17'
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
+def build_capture():
+ """Patch the exporter into existing images, retaining every Go binary and base layer."""
+ from build_inputs import verify_source
+ from host_runtime import docker_cli
+ from version import VERSION
+ verify_source(ROOT);check_overrides()
+ manifest=json.loads((ROOT/'release-manifest.json').read_text())
+ manifest['files']={n:h for n,h in manifest['files'].items() if not mutable_sample(n)}
+ def allowed(name):
+  p=Path(name)
+  return (len(p.parts)==1 and p.suffix=='.py') or (p.parts[0]=='ui' and p.suffix in ('.js','.css','.html')) or name in ('static/management.local.html','image/sample_export.py')
+ for name,want in manifest['files'].items():
+  if not allowed(name) and digest(ROOT/name)!=want:raise ValueError('capture_build_cannot_change: '+name)
+ info=json.loads((ROOT/'image.json').read_text())
+ if any(info[k]!=v for k,v in manifest['images'].items()):raise ValueError('capture_build_image_changed')
+ cli=docker_cli();prior={k:info[k] for k in ('id','tls_test')}
+ with tempfile.TemporaryDirectory(prefix='cpa-export-image-') as folder:
+  p=Path(folder);shutil.copy2(ROOT/'image/sample_export.py',p/'sample_export.py')
+  for key,base in prior.items():
+   run(cli+['image','inspect',base])
+   (p/'Dockerfile').write_text('FROM '+base+'\nCOPY --chown=1001:1001 sample_export.py /opt/native/sample_export.py\n')
+   info[key]=run(cli+['build','--pull=false','--network','none','-q',str(p)])
+ run([sys.executable,'-B',str(ROOT/'build_page.py')])
+ (ROOT/'image.json').write_text(json.dumps(info,indent=2)+'\n')
+ for name in manifest['files']:manifest['files'][name]=digest(ROOT/name)
+ manifest.update(candidate=VERSION,ui_revision='accounts-ui17',capture_export_version=2,capture_patch_bases=prior,images={k:info[k] for k in manifest['images']})
+ (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+ print('Capture package complete; existing Go binaries and runtime environment retained.',flush=True)
 def build(images=True, runtime_base=None, fixture_base=None):
  for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
  from build_inputs import verify_source
@@ -89,11 +120,13 @@ def build(images=True, runtime_base=None, fixture_base=None):
  files={}
  for p in ROOT.rglob('*'):
   if not p.is_file() or any(x in p.relative_to(ROOT).parts for x in ['evidence','tests','__pycache__','.git','.build-tools']):continue
+  if mutable_sample(str(p.relative_to(ROOT))):continue
   if p.name=='release-manifest.json':continue
   files[str(p.relative_to(ROOT))]=digest(p)
  (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'container-native7','build_runtime_base':runtime_base or base['id'],'published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':False,'container_derived_headers':['X-Stainless-OS','X-Stainless-Arch'],'other_manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
- parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');parser.add_argument('--fixture-base',help='Existing local fixture build base');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');parser.add_argument('--fixture-base',help='Existing local fixture build base');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');modes.add_argument('--capture-only',action='store_true');args=parser.parse_args()
  if args.control_only:build_control()
+ elif args.capture_only:build_capture()
  else:build(not args.compile_only,args.runtime_base,args.fixture_base)
