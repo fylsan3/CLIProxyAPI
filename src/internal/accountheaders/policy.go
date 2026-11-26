@@ -166,6 +166,9 @@ var policy = func() document {
 	return d
 }()
 
+// ClientVersion is shared by HTTP declarations and CPA-generated billing text.
+func ClientVersion() string { return policy.Variables["client_version"] }
+
 func Version() string         { return policy.Version }
 func Digest() string          { s := sha256.Sum256([]byte(PolicyJSON)); return hex.EncodeToString(s[:]) }
 func Operations() []Operation { return append([]Operation(nil), policy.Operations...) }

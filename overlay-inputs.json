@@ -39,5 +39,9 @@
   "internal/auth/claude/anthropic_auth_test.go": "src/internal/auth/claude/anthropic_auth_test.go",
   "internal/util/container_cooldown.go": "src/internal/util/container_cooldown.go",
   "cmd/server/offline_capture_session.go": "src/cmd/server/offline_capture_session.go",
-  "internal/accountheaders/policy.go": "src/internal/accountheaders/policy.go"
+  "internal/accountheaders/policy.go": "src/internal/accountheaders/policy.go",
+  "internal/runtime/executor/claude_executor_cloaking.go": "src/internal/runtime/executor/claude_executor_cloaking.go",
+  "internal/runtime/executor/claude_executor_diagnostics_test.go": "src/internal/runtime/executor/claude_executor_diagnostics_test.go",
+  "internal/runtime/executor/claude_executor_test.go": "src/internal/runtime/executor/claude_executor_test.go",
+  "internal/runtime/executor/claude_billing_policy_test.go": "src/internal/runtime/executor/claude_billing_policy_test.go"
 }
