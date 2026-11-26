@@ -1,0 +1,16 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('ui/app.js','utf8');
+const nodes=[];const text=(parent,tag,value,cls)=>{const node={tag,value,cls};nodes.push(node);return node;};
+const c=vm.createContext({text});vm.runInContext(source.slice(source.indexOf('function captureNeedsAttention'),source.indexOf('function attemptTone')),c);
+const p={state:{capture_audit:{last_archive:'new',capture_issue:'response_capture_incomplete',alerts:[{archive:'old',path:'/v1/messages',at:'past',mismatched_headers:['accept']}]}},capture_status:{archive_id:'new',state:'complete',current_issues:[],historical_issues:[{sample_id:'old-0001',codes:['response_capture_incomplete']}],unattributed_legacy_issue:'response_capture_incomplete'}};
+assert.equal(c.captureNeedsAttention(p),false);c.renderCaptureStatus({},p);
+assert(nodes.some(n=>n.value==='最近请求的 HTTP 采样完整'&&n.cls==='status-ok'));
+assert(nodes.some(n=>n.value.includes('原记录没有请求编号')));
+assert(nodes.some(n=>n.value.includes('历史样本 old-0001')));
+assert(!nodes.some(n=>n.cls==='status-bad'));
+p.capture_status.state='issue';p.capture_status.current_issues=[{sample_id:'new-0001',codes:['body_decode_failed']}];nodes.length=0;
+assert.equal(c.captureNeedsAttention(p),true);c.renderCaptureStatus({},p);
+assert(nodes.some(n=>n.value.includes('当前样本 new-0001')&&n.cls==='status-bad'));
+p.capture_status.state='pending';p.capture_status.current_issues=[];nodes.length=0;c.renderCaptureStatus({},p);
+assert(!nodes.some(n=>n.value==='最近请求的 HTTP 采样完整'));
+console.log('capture UI: current, historical, unassociated, decode failure and pending passed');

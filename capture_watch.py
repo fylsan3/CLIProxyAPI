@@ -5,7 +5,7 @@ are written into samples/captured. Notification payload contains no account data
 import argparse,json,os,subprocess,time
 from pathlib import Path
 from host_runtime import docker_cli
-from sample_status import response_review
+from sample_status import response_review,review_issues
 ROOT=Path(__file__).resolve().parent
 
 def atomic(path,value):
@@ -16,10 +16,11 @@ def execute(container,script,payload=None):
  r=subprocess.run(docker_cli()+['exec','--user','1001:1001','-i',container,'python3','-B','-c',script],input=json.dumps(payload or {}),text=True,capture_output=True,timeout=45)
  if r.returncode:raise RuntimeError('container_capture_operation_failed')
  return json.loads(r.stdout)
-STATUS="""import json
+STATUS="""import json,sys
 from pathlib import Path
+sys.path.insert(0,'/opt/native');import sample_export
 root=Path('/state');a=root/'header-audit.json';w=root/'capture-window.json';base=root/'http-samples'
-print(json.dumps({'audit':json.loads(a.read_text()) if a.exists() else {},'window':json.loads(w.read_text()) if w.exists() else {},'archives':{x.name:[f.name for f in x.iterdir() if f.is_dir()] for x in base.iterdir() if x.is_dir()} if base.exists() else {}}))
+print(json.dumps({'body_export_version':getattr(sample_export,'BODY_EXPORT_VERSION',1),'audit':json.loads(a.read_text()) if a.exists() else {},'window':json.loads(w.read_text()) if w.exists() else {},'archives':{x.name:[f.name for f in x.iterdir() if f.is_dir()] for x in base.iterdir() if x.is_dir()} if base.exists() else {}}))
 """
 ARM="""import json,os,sys
 from pathlib import Path
@@ -54,28 +55,50 @@ def watch(state,destination,record,arm=False,hours=24,once=False,arm_only=False)
    if not account or account['environment_id']!=card['environment_id']:continue
    try:
     status=execute(card['container'],STATUS);audit=status['audit'];account['audit']=audit
+    # Re-export only previously selected old compressed fixtures. The original
+    # encrypted archive and window/skip selection are never changed.
+    if status.get('body_export_version',1)>=2 and account.get('body_export_migration')!=2:
+     upgrade=[]
+     for sid in account['exported']:
+      path=destination/(sid+'.json')
+      if not path.exists():continue
+      sample=json.loads(path.read_text())
+      if sample.get('body_export_version',1)<2 and any(sample.get(side,{}).get('body',{}).get('format')=='encoded_or_binary_redacted' for side in ('request','response')):upgrade.append(sid)
+     account['body_export_pending']=upgrade;account['body_export_migration']=2
+    upgrades=set(account.get('body_export_pending',[])) if status.get('body_export_version',1)>=2 else set()
     pending=[a for a,exchanges in status['archives'].items() if a not in account['skip'] and any(a+'-'+e not in account['exported'] for e in exchanges)][:20]
+    pending=list(dict.fromkeys(pending+[sid.rsplit('-',1)[0] for sid in sorted(upgrades)]))[:20]
+    changed_samples=set()
     if pending:
-     exported=execute(card['container'],EXPORT,{'archives':pending,'skip':account['exported']})
+     exported=execute(card['container'],EXPORT,{'archives':pending,'skip':[sid for sid in account['exported'] if sid not in upgrades]})
+     changed_samples={s['sample_id'] for s in exported.get('samples',[])}
      for sample in exported.get('samples',[]):
       sample['response_review']=response_review(sample)
       atomic(destination/(sample['sample_id']+'.json'),sample)
       account['latest_response_review']={'sample_id':sample['sample_id'],**sample['response_review']}
+      if sample.get('body_export_version',1)>=2:upgrades.discard(sample['sample_id'])
+     if status.get('body_export_version',1)>=2:account['body_export_pending']=sorted(upgrades)
      incomplete={x['sample_id'] for x in exported.get('pending',[])}
      # Only close an archive if an exchange was actually exported and none is pending.
      completed={x['sample_id'] for x in exported.get('samples',[])}-incomplete
      account['exported']=sorted(set(account['exported'])|completed)
     # Reclassify already exported sanitized samples too; no account/upstream request.
-    reviews={}
+    reviews={};history={x['sample_id']:x for x in account.get('capture_issue_history',[])}
     for sample_id in account['exported']:
-     if account.get('review_version')==1 and not sample_id.startswith(audit.get('last_archive','!')+'-'):continue
+     if account.get('review_version')==2 and sample_id not in changed_samples and not sample_id.startswith(audit.get('last_archive','!')+'-'):continue
      path=destination/(sample_id+'.json')
      if not path.exists():continue
      sample=json.loads(path.read_text());review=response_review(sample)
      if sample.get('response_review')!=review:sample['response_review']=review;atomic(path,sample)
+     codes=review_issues(review)
+     if codes:history[sample_id]={'sample_id':sample_id,'codes':codes}
+     else:history.pop(sample_id,None)
      if sample_id.startswith(audit.get('last_archive','!')+'-'):reviews[sample_id]=review
     account['latest_response_reviews']=reviews
-    account['review_version']=1
+    account['capture_issue_history']=list(history.values())[-32:]
+    archive=audit.get('last_archive','')
+    account['latest_expected_samples']=[archive+'-'+e for e in status['archives'].get(archive,[])]
+    account['review_version']=2
     for alert in audit.get('alerts',[]):
      signature=json.dumps(alert,sort_keys=True)
      if signature not in account['alert_signatures']:

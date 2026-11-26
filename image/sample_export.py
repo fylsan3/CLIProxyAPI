@@ -8,6 +8,44 @@ from urllib.parse import urlsplit,parse_qsl
 import http_archive
 import field_provenance
 
+BODY_EXPORT_VERSION=2
+MAX_DECODED_BODY=128*1024*1024
+
+class BodyDecodeError(ValueError):pass
+
+def decode_brotli(raw,limit=MAX_DECODED_BODY):
+ # Ubuntu's Chromium image already includes libbrotlidec. Stream with a hard
+ # output bound; never install packages or return undecoded private bytes.
+ import ctypes,ctypes.util
+ try:
+  name=ctypes.util.find_library('brotlidec')
+  if not name:raise OSError()
+  lib=ctypes.CDLL(name)
+  ptr=ctypes.c_void_p;size=ctypes.c_size_t
+  lib.BrotliDecoderCreateInstance.argtypes=[ptr,ptr,ptr];lib.BrotliDecoderCreateInstance.restype=ptr
+  lib.BrotliDecoderDestroyInstance.argtypes=[ptr];lib.BrotliDecoderDestroyInstance.restype=None
+  lib.BrotliDecoderDecompressStream.argtypes=[ptr,ctypes.POINTER(size),ctypes.POINTER(ptr),ctypes.POINTER(size),ctypes.POINTER(ptr),ctypes.POINTER(size)]
+  lib.BrotliDecoderDecompressStream.restype=ctypes.c_int
+ except (OSError,AttributeError):raise BodyDecodeError('brotli_decoder_unavailable') from None
+ decoder=lib.BrotliDecoderCreateInstance(None,None,None)
+ if not decoder:raise BodyDecodeError('brotli_decoder_unavailable')
+ try:
+  source=ctypes.create_string_buffer(raw);available=size(len(raw));next_in=ctypes.cast(source,ptr);parts=[];written=0
+  while True:
+   capacity=min(65536,limit-written+1)
+   target=ctypes.create_string_buffer(capacity);remaining=size(capacity);next_out=ctypes.cast(target,ptr)
+   result=lib.BrotliDecoderDecompressStream(decoder,ctypes.byref(available),ctypes.byref(next_in),ctypes.byref(remaining),ctypes.byref(next_out),None)
+   produced=capacity-remaining.value;written+=produced
+   if written>limit:raise BodyDecodeError('decoded_body_too_large')
+   parts.append(target.raw[:produced])
+   if result==1:
+    if available.value:raise BodyDecodeError('brotli_trailing_data')
+    return b''.join(parts)
+   if result==0:raise BodyDecodeError('brotli_invalid_data')
+   if result==2:raise BodyDecodeError('brotli_truncated_data')
+   if result!=3 or not produced:raise BodyDecodeError('brotli_invalid_data')
+ finally:lib.BrotliDecoderDestroyInstance(decoder)
+
 SAFE_KEYS=set('model messages system tools metadata role content type text name input id tool_use_id tool_result is_error stop_reason stop_sequence usage input_tokens output_tokens cache_creation_input_tokens cache_read_input_tokens event index delta message error code status request_id program grant_id cedar_ember grants eligible ineligible_reason at_limit next_grant_id weekly_resets_at cooldown_until label resets_total resets_left starts_at ends_at clears paused usable_now use_requires_limit percent_used five_hour seven_day seven_day_overage_included utilization resets_at subscription_type rate_limit_tier organization account uuid email refresh_token access_token expires_in token_type scope stream max_tokens temperature top_p input_schema properties required additionalProperties description signature thinking partial_json'.split())
 ENUMS=set('user assistant system text image tool_use tool_result message message_start message_delta message_stop content_block_start content_block_delta content_block_stop text_delta input_json_delta thinking_delta signature_delta end_turn tool_use max_tokens stop_sequence error ping api_error rate_limit_error authentication_error permission_error overloaded_error reset already_used not_limited cooldown ineligible unavailable cedar_ember five_hour seven_day seven_day_overage_included'.split())
 SAFE_HEADERS={'user-agent','content-type','accept','accept-encoding','content-encoding','connection','anthropic-version','anthropic-beta','x-app','anthropic-dangerous-direct-browser-access','x-stainless-os','x-stainless-arch','x-stainless-runtime','x-stainless-runtime-version','x-stainless-lang','x-stainless-package-version','x-stainless-retry-count','x-stainless-timeout','cache-control','transfer-encoding','retry-after','retry-after-ms'}
@@ -32,12 +70,12 @@ class Sanitizer:
  def headers(self,rows):
   return [{'name':k,'values':[v if k.lower() in SAFE_HEADERS and v in HEADER_VALUES.get(k.lower(),set()) else self.token(v) for v in vs]} for k,vs in rows]
  def body(self,raw,headers):
-  encoding=next((vs[0] for k,vs in headers.items() if k.lower()=='content-encoding' and vs),'')
+  encoding=next((vs[0].strip().lower() for k,vs in headers.items() if k.lower()=='content-encoding' and vs),'')
   try:
    if encoding=='gzip':raw=gzip.decompress(raw)
    elif encoding=='deflate':raw=zlib.decompress(raw)
    elif encoding=='br':
-    import brotli;raw=brotli.decompress(raw)
+    raw=decode_brotli(raw)
    elif encoding=='zstd':
     import zstandard;raw=zstandard.ZstdDecompressor().decompress(raw,max_output_size=128*1024*1024)
    elif encoding:raise ValueError('unsupported encoding')
@@ -57,7 +95,8 @@ class Sanitizer:
      else:lines.append('')
     return {'format':'sse','lines':lines}
    return {'format':'opaque_redacted','value':self.token(raw)}
-  except Exception:return {'format':'encoded_or_binary_redacted','value':self.token(raw)}
+  except BodyDecodeError as e:return {'format':'encoded_or_binary_redacted','value':self.token(raw),'decode_error':str(e)}
+  except Exception:return {'format':'encoded_or_binary_redacted','value':self.token(raw),'decode_error':'body_decode_failed'}
  def header_comparison(self,q):
   before=q.get('before_override')
   if before is None:return {'available':False,'reason':'historical_capture_without_before_snapshot'}
@@ -84,7 +123,7 @@ class Sanitizer:
  def exchange(self,folder,key):
   q,r,body,reply=http_archive.load_exchange(folder,key,allow_incomplete=True);u=urlsplit(q['url'])
   path=u.path if u.path in PATHS else '/redacted-endpoint'
-  return {'schema':1,'source':'captured_then_sanitized','sample_id':folder.parent.name+'-'+folder.name,'exact_original_replay':False,
+  return {'schema':1,'body_export_version':BODY_EXPORT_VERSION,'source':'captured_then_sanitized','sample_id':folder.parent.name+'-'+folder.name,'exact_original_replay':False,
    'export_policy':{'version':POLICY['policy_version'],'sha256':POLICY['policy_sha256']},
    'capture_policy':{'version':q.get('policy_version'),'sha256':q.get('policy_sha256')},
    'completeness':{'request':bool(q.get('complete')),'response':bool(r.get('complete')),'original_full_replay_eligible':bool(q.get('complete') and r.get('complete'))},

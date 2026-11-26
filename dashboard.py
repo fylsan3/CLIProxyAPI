@@ -2,15 +2,30 @@
 
 from account_identity import valid_slug
 import json
+from sample_status import capture_summary
 
-def capture_reviews(broker,project):
+def capture_monitor_account(broker,project):
     try:
         record=json.loads((broker.folder.parent/'capture-monitor.json').read_text())
         account=record.get('accounts',{}).get(project['slug'].upper(),{})
-        if account.get('environment_id')!=project.get('protection',{}).get('environment_id'):return {}
+        environment=project.get('protection',{}).get('environment_id')
+        if not environment or account.get('environment_id')!=environment:return {}
+        return account
+    except (OSError,ValueError,TypeError):return {}
+
+def capture_reviews(broker,project):
+    try:
+        account=capture_monitor_account(broker,project)
         archive=project.get('state',{}).get('capture_audit',{}).get('last_archive')
         return {k:v for k,v in account.get('latest_response_reviews',{}).items() if archive and k.startswith(archive+'-')}
     except (OSError,ValueError,TypeError):return {}
+
+def capture_issue_status(broker,project):
+    account=capture_monitor_account(broker,project)
+    audit=project.get('state',{}).get('capture_audit',{})
+    # A stale monitor cannot certify a newer archive. capture_summary filters
+    # every sample by the live archive ID, including expected exchange IDs.
+    return capture_summary(audit,account.get('latest_response_reviews',{}),account.get('capture_issue_history',[]),account.get('latest_expected_samples',[]))
 
 def snapshot(broker):
     _, result = broker.admin('list', {})
@@ -18,6 +33,7 @@ def snapshot(broker):
         from action_trace import latest
         project['last_account_update']=latest(broker.folder,project['slug'])
         project['response_reviews']=capture_reviews(broker,project)
+        project['capture_status']=capture_issue_status(broker,project)
         identity=project.get('identity')
         if identity and identity.get('email'):project['label']=identity['email']
         _, history = broker.admin('history', {'slug': project['slug']})

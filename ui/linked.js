@@ -68,7 +68,7 @@
    table(s,['模型','绑定账号','本地可接单账号数'],[...models].map(([m,ps])=>[m,ps.map(p=>p.label||p.slug).join('、'),ps.filter(p=>p.overall_ready).length]));el(s,'p','模型来自本地注册清单，不代表账号已经验证可调用。此页只读取已保存的状态，不主动探测上游。','help');
   }
   if(path==='/ai-providers')el(main,'p','订阅账号由独立容器管理，不计入下方原生供应商 API Key 数量。');
-  el(main,'p','运行版本：'+(data.release?.candidate||'未知')+' · 管理界面 accounts-ui16 · 更新于 '+new Date().toLocaleTimeString(),'help');
+  el(main,'p','运行版本：'+(data.release?.candidate||'未知')+' · 管理界面 accounts-ui17 · 更新于 '+new Date().toLocaleTimeString(),'help');
   if(focused)[...view.querySelectorAll('[data-focus-key]')].find(e=>e.dataset.focusKey===focused)?.focus({preventScroll:true});
  }
  function reconcile(){const state=session.getState(),path=route(),key=state.isAuthenticated&&!isAccountPage()&&(names[path]||contextual[path])?path:'';const parent=nativeDocument.querySelector('.main-content');if(parent&&box.parentElement!==parent)parent.append(box);if(last===key)return;last=key;abort?.abort();clearInterval(timer);busy=false;box.hidden=true;view.replaceChildren();nativeDocument.documentElement.removeAttribute('data-container-page');if(!state.isAuthenticated)known=false;if(!key)return;abort=new AbortController();poll(key);timer=window.setInterval(()=>{if(!nativeDocument.hidden&&!view.activeElement?.matches('input,select,textarea'))poll(key);},5000);}

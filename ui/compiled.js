@@ -3,7 +3,7 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui16';
+  host.dataset.uiRevision = 'accounts-ui17';
   const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
   syncStatusTheme();
   new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
@@ -359,10 +359,26 @@ const failedReasons=new Set(['container_stopped','worker_unavailable','binding_c
 const failedPhases=new Set(['creation_failed','authorization_failed','backup_failed','recovery_check_failed']);
 function accountTone(p){return p.overall_ready?'status-ok':failedPhases.has(p.protection?.phase)||failedReasons.has(p.reason)||p.state?.authorization_issue?'status-bad':'';}
 function captureNeedsAttention(p){
- const audit=p.state?.capture_audit||{};if(audit.alerts?.length)return true;
- if(!audit.capture_issue)return false;if(audit.capture_issue!=='response_capture_incomplete')return true;
- const reviews=Object.values(p.response_reviews||{});
- return !reviews.length||reviews.some(r=>r.http_response!=='complete'&&r.model_response!=='complete');
+ const audit=p.state?.capture_audit||{};
+ return (audit.alerts||[]).some(a=>a.archive&&a.archive===audit.last_archive)||p.capture_status?.state==='issue';
+}
+function renderCaptureStatus(parent,p){
+ const audit=p.state?.capture_audit||{},status=p.capture_status||{};
+ const titles={complete:'最近请求的 HTTP 采样完整',pending:'最近请求正在等待采样核验',issue:'最近请求的采样需要检查',unconfirmed:'最近请求的完整性尚未确认'};
+ text(parent,'p',titles[status.state]||'最近请求尚无采样核验结果',status.state==='complete'?'status-ok':status.state==='issue'?'status-bad':'help');
+ if(status.archive_id)text(parent,'p','关联请求：'+status.archive_id,'help');
+ const labels={request_capture_incomplete:'请求采样不完整',response_capture_incomplete:'响应采样结束未确认',body_decode_failed:'脱敏导出解压失败',worker_return_interrupted:'执行器回传中断'};
+ for(const item of status.current_issues||[])text(parent,'p','当前样本 '+item.sample_id+'：'+item.codes.map(c=>labels[c]||c).join('、'),'status-bad');
+ const history=status.historical_issues||[],legacy=status.unattributed_legacy_issue||audit.capture_issue;
+ if(history.length||legacy){
+  const box=text(parent,'details','');text(box,'summary','历史采样告警（不代表当前请求）');
+  for(const item of history)text(box,'p','历史样本 '+item.sample_id+'：'+item.codes.map(c=>labels[c]||c).join('、'),'help');
+  if(legacy)text(box,'p','旧版未关联告警：'+(labels[legacy]||legacy)+'；原记录没有请求编号，无法确定属于哪条请求。','help');
+ }
+ for(const alert of (audit.alerts||[]).slice(-5)){
+  const current=alert.archive&&alert.archive===audit.last_archive;
+  text(parent,'p',`${current?'当前':'历史'}请求头检查 · ${alert.archive||'未关联请求'} · ${alert.path}：${[...(alert.mismatched_headers||[]),...(alert.unclassified_headers||[])].join('、')||'发送失败'} · ${alert.at}`,current?'status-bad':'help');
+ }
 }
 function attemptTone(a){return a.stop_reason||Number(a.status)>=400||a.state==='not_dispatched'?'status-bad':a.state==='completed'&&Number(a.status)>=200&&Number(a.status)<300?'status-ok':'';}
 
@@ -483,7 +499,7 @@ function renderCard(p,data){
  if(p.last_success_at)text(section,'p','最近成功调用：'+new Date(p.last_success_at*1000).toLocaleString(),'status-ok');else text(section,'p','尚无成功调用记录；可接单表示本地条件通过。');
  section=detail(content,'环境保护与备份');text(section,'p',protectionLabels[protection.phase]||'环境保护状态未知',protection.phase==='ready'?'status-ok':failedPhases.has(protection.phase)?'status-bad':'');if(protection.environment_id)text(section,'p','环境编号：'+protection.environment_id.slice(0,12));if(protection.initial_backup)text(section,'p','初始环境备份：已完成','status-ok');if(protection.verified_at)text(section,'p','完整备份校验：'+new Date(protection.verified_at*1000).toLocaleString(),'status-ok');
  if(backup){text(section,'p',backup.state==='exported'?'加密备份已保存 · 凭据版本 '+backup.revision+' · '+new Date(backup.exported_at*1000).toLocaleString():backup.state==='not_created'?'创建环境后自动备份':backup.state==='not_exported'?'等待保存加密备份包':'备份位置暂不可用',backup.state==='exported'?'status-ok':['not_created','not_exported'].includes(backup.state)?'':'status-bad');if(backup.stale)text(section,'p','加密包为旧凭据版本，当前版本 '+backup.current_revision+'；正在等待自动导出更新。','status-bad');if(backup.environment_outdated)text(section,'p','加密包尚未更新到当前运行环境；已保留旧包，等待导出完成。','status-bad');if(backup.warning&&!backup.stale&&!backup.environment_outdated)text(section,'p',backup.state==='exported'?'最近一次加密导出未完成，上一份加密包保留，可重试。':'加密备份包尚未生成；容器内完整备份仍保留，请重试导出。','status-bad');if(backup.error_code)text(section,'p',({backup_too_large:'压缩后的加密包超过大小上限',backup_expanded_too_large:'备份内容超过解压大小上限',checkpoint_changed_retry_export:'备份期间凭据更新，请重新导出',backup_export_failed:'导出未完成，请检查存储空间与备份记录'})[backup.error_code]||'导出错误待检查','status-bad');}text(section,'p','本地备份不能覆盖整台主机丢失；异机副本尚未验证。');
- section=detail(content,'测试采样与请求头检查');const audit=p.state?.capture_audit||{};text(section,'p',audit.capture_active?'测试采样已开启：记录 Go 账号请求；不含浏览器和网络探测':'测试窗口未开启；刷新用量仍按既有规则留样');text(section,'p',`已观察请求：${audit.observed_requests||0}`);if(audit.capture_issue)text(section,'p',audit.capture_issue==='response_capture_incomplete'?'HTTP 样本结束尚未确认；这项记录未判断模型回复是否已结束，不能用于完整 HTTP 重放。':'采样异常：'+audit.capture_issue,audit.capture_issue==='response_capture_incomplete'?'help':'status-bad');for(const alert of (audit.alerts||[]).slice(-5)){text(section,'p',`请求头需检查 ${alert.path}：${[...(alert.mismatched_headers||[]),...(alert.unclassified_headers||[])].join('、')||'发送失败'} · ${alert.at}`,'status-bad');}
+ section=detail(content,'测试采样与请求头检查');const audit=p.state?.capture_audit||{};text(section,'p',audit.capture_active?'测试采样已开启：记录 Go 账号请求；不含浏览器和网络探测':'测试窗口未开启；刷新用量仍按既有规则留样');text(section,'p',`已观察请求：${audit.observed_requests||0}`);renderCaptureStatus(section,p);
  for(const [id,review] of Object.entries(p.response_reviews||{})){text(section,'p','最近样本：'+id);text(section,'p','HTTP 原始样本：'+(review.http_response==='complete'?'完整':'结束未确认'),review.http_response==='complete'?'status-ok':'help');text(section,'p','模型回复：'+({complete:'已观察到完整结束',end_unconfirmed:'未确认完整结束',upstream_error:'上游返回错误',not_observed:'该样本未判断模型回复'}[review.model_response]||'未判断'),review.model_response==='complete'?'status-ok':review.model_response==='upstream_error'?'status-bad':'help');text(section,'p','客户端是否完整接收：当前采样边界无法确认','help');}
  section=detail(content,'用量刷新记录');
  const update=p.last_account_update;
@@ -778,7 +794,7 @@ function renderResetGrants(parent,p,showDetails=false){
    table(s,['模型','绑定账号','本地可接单账号数'],[...models].map(([m,ps])=>[m,ps.map(p=>p.label||p.slug).join('、'),ps.filter(p=>p.overall_ready).length]));el(s,'p','模型来自本地注册清单，不代表账号已经验证可调用。此页只读取已保存的状态，不主动探测上游。','help');
   }
   if(path==='/ai-providers')el(main,'p','订阅账号由独立容器管理，不计入下方原生供应商 API Key 数量。');
-  el(main,'p','运行版本：'+(data.release?.candidate||'未知')+' · 管理界面 accounts-ui16 · 更新于 '+new Date().toLocaleTimeString(),'help');
+  el(main,'p','运行版本：'+(data.release?.candidate||'未知')+' · 管理界面 accounts-ui17 · 更新于 '+new Date().toLocaleTimeString(),'help');
   if(focused)[...view.querySelectorAll('[data-focus-key]')].find(e=>e.dataset.focusKey===focused)?.focus({preventScroll:true});
  }
  function reconcile(){const state=session.getState(),path=route(),key=state.isAuthenticated&&!isAccountPage()&&(names[path]||contextual[path])?path:'';const parent=nativeDocument.querySelector('.main-content');if(parent&&box.parentElement!==parent)parent.append(box);if(last===key)return;last=key;abort?.abort();clearInterval(timer);busy=false;box.hidden=true;view.replaceChildren();nativeDocument.documentElement.removeAttribute('data-container-page');if(!state.isAuthenticated)known=false;if(!key)return;abort=new AbortController();poll(key);timer=window.setInterval(()=>{if(!nativeDocument.hidden&&!view.activeElement?.matches('input,select,textarea'))poll(key);},5000);}
