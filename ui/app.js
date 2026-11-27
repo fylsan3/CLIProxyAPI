@@ -78,7 +78,23 @@ const cardMotion=(()=>{
  return {bind,expand,finish,remove};
 })();
 
-const expandedAccounts=new Set();let currentProjects=[];
+const expandedAccounts=new Set(),detailTabs=new Map();let currentProjects=[];
+function organizeDetails(content,p){
+ const groups=[['overview','概览',['环境与网络','授权与凭据']],['usage','用量',['上游额度观测','已确认用量','累计请求']],['backup','备份',['环境保护与备份']],['records','记录',['测试采样与请求头检查','用量刷新记录','最近执行记录']]];
+ const sections=[...content.children],nav=document.createElement('div');nav.className='detail-tabs';nav.setAttribute('role','tablist');nav.setAttribute('aria-label','账号详情分类');content.prepend(nav);
+ const panels=[];let selected=detailTabs.get(p.slug)||'overview';
+ const select=(id,focus=false)=>{selected=id;detailTabs.set(p.slug,id);for(const [key,button,panel] of panels){button.setAttribute('aria-selected',String(key===id));button.tabIndex=key===id?0:-1;panel.hidden=key!==id;if(key===id&&focus)button.focus();}};
+ for(const [id,label,titles] of groups){
+  const button=text(nav,'button',label,'detail-tab');button.type='button';button.dataset.focusId=p.slug+':tab:'+id;button.id='detail-tab-'+p.slug+'-'+id;button.setAttribute('role','tab');
+  const panel=text(content,'div','','detail-panel');panel.id='detail-panel-'+p.slug+'-'+id;panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',button.id);button.setAttribute('aria-controls',panel.id);
+  for(const section of sections)if(titles.includes(section.querySelector('h3')?.textContent))panel.append(section);
+  panels.push([id,button,panel]);button.onclick=()=>select(id);
+  button.onkeydown=e=>{const index=panels.findIndex(x=>x[0]===selected);let next;if(e.key==='ArrowRight')next=(index+1)%groups.length;if(e.key==='ArrowLeft')next=(index+groups.length-1)%groups.length;if(e.key==='Home')next=0;if(e.key==='End')next=groups.length-1;if(next!==undefined){e.preventDefault();select(groups[next][0],true);}};
+ }
+ const actions=sections.find(s=>s.classList.contains('detail-actions'));
+ for(const button of [...(actions?.children||[])]){const id=button.dataset.focusId.endsWith(':auth-refresh')?'overview':'backup';panels.find(x=>x[0]===id)[2].append(button);}
+ actions?.remove();select(selected);
+}
 function filterAccounts(){const q=document.querySelector('#account-search').value.trim().toLocaleLowerCase();let shown=0;for(const card of accounts.querySelectorAll('.account-card,.account-slot')){card.hidden=!card.dataset.search.includes(q);if(!card.hidden)shown++;}const empty=document.querySelector('#search-empty');if(empty)empty.hidden=!currentProjects.length||shown>0;}
 document.querySelector('#add-account').onclick=()=>showAdd();document.querySelector('#cancel-add').onclick=()=>showAdd(false);document.querySelector('#account-search').addEventListener('input',filterAccounts);
 function renderCard(p,data){
@@ -166,7 +182,7 @@ function renderCard(p,data){
  section=detail(content,'已确认用量');if(p.usage){const u=p.usage;text(section,'p','输入：'+(u.totals.input_tokens??'未报告')+' · 输出：'+(u.totals.output_tokens??'未报告'));const counts=text(section,'p','');for(const [key,label] of [['confirmed','完整'],['partial','部分'],['unreported','未报告'],['invalid','异常']]){if(counts.childNodes.length)text(counts,'span',' · ');const n=u.attempt_counts[key];text(counts,'span',label+' '+n,n>0?(key==='confirmed'?'status-ok':key==='invalid'?'status-bad':''):'');}text(section,'p','模型报告值，不是账单；部分记录不计入合计。');}else text(section,'p','暂无用量记录。');
  section=detail(content,'累计请求');if(p.statistics)text(section,'p','请求 '+p.statistics.requests+' · 执行尝试 '+p.statistics.attempts+' · 成功 '+p.statistics.successful_attempts+' · 失败 '+p.statistics.failed_attempts);
  section=detail(content,'最近执行记录');if(!p.attempts?.length)text(section,'p','暂无执行记录。');for(const a of p.attempts||[])text(section,'p',(results[a.state]||a.state)+' · '+a.id.slice(0,10)+(a.status?' · HTTP '+a.status:'')+(a.stop_reason?' · '+(stops[a.stop_reason]||a.stop_reason):''),attemptTone(a));
- const more=text(content,'div','','detail-actions');if(p.state?.authorized&&!p.state.refreshing)action(more,'auth-refresh','立即刷新凭据',true);if(protection.backup_verified)action(more,'backup-export','更新加密备份',true);if(['container_stopped','worker_unavailable','network_status_unknown','binding_check_failed'].includes(p.reason)&&backup?.state==='exported')action(more,'backup-restore','从加密备份恢复',true);if(!more.children.length)more.hidden=true;details.scrollTop=detailScroll;
+ const more=text(content,'div','','detail-actions');if(p.state?.authorized&&!p.state.refreshing)action(more,'auth-refresh','立即刷新凭据',true);if(protection.backup_verified)action(more,'backup-export','更新加密备份',true);if(['container_stopped','worker_unavailable','network_status_unknown','binding_check_failed'].includes(p.reason)&&backup?.state==='exported')action(more,'backup-restore','从加密备份恢复',true);organizeDetails(content,p);details.scrollTop=detailScroll;
 }
 
 async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].includes(document.activeElement?.tagName)))return;busy=true;const focusKey=document.activeElement?.dataset?.focusId;try{

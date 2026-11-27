@@ -2,6 +2,8 @@
 import hashlib,json,re
 from pathlib import Path
 r=Path(__file__).resolve().parent
+from build_inputs import remind_linked_review
+remind_linked_review(r,'build:management-page')
 source=(r/'static/management.html').read_bytes()
 if hashlib.sha256(source).hexdigest()!='13674049eb63ef2d3df8daf58aa1f42b397460ab5fedebd43a3bfc48fe20bbc7' or source.count(b'</script>')!=1:
     raise SystemExit('Management asset changed; review its session/theme adapter before building.')

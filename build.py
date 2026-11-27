@@ -26,6 +26,8 @@ def check_overrides():
  assert set(policy['request_blocked'])==set(re.findall(r'"([^"]+)":\s*true',code)),'header policies diverged'
 def build_control():
  """Repackage controller/UI changes without rebuilding or replacing any Go binary/image."""
+ from build_inputs import remind_linked_review
+ remind_linked_review(ROOT,'build:control-only')
  from build_inputs import verify_source
  verify_source(ROOT);check_overrides()
  manifest=json.loads((ROOT/'release-manifest.json').read_text())
@@ -45,6 +47,8 @@ def build_control():
  print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
 def build_capture():
  """Patch the exporter into existing images, retaining every Go binary and base layer."""
+ from build_inputs import remind_linked_review
+ remind_linked_review(ROOT,'build:capture-only')
  from build_inputs import verify_source
  from host_runtime import docker_cli
  from version import VERSION
@@ -72,6 +76,8 @@ def build_capture():
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Capture package complete; existing Go binaries and runtime environment retained.',flush=True)
 def build(images=True, runtime_base=None, fixture_base=None):
+ from build_inputs import remind_linked_review
+ remind_linked_review(ROOT,'build:full' if images else 'build:compile-only')
  for name in ('image','central','config'):(ROOT/name).mkdir(exist_ok=True)
  from build_inputs import verify_source
  verify_source(ROOT)

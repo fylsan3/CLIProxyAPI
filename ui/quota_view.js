@@ -57,7 +57,7 @@ function accountQuotaWindows(state){
   if(value?.is_active===false&&(!valid||activeNewer))return {label,active:false,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
   if(activeValid&&(!valid||activeNewer))return {label,percent:value.utilization,reset:value.resets_at,stamp:active?.observed_at,source:'资料查询'};
   return {label,percent:valid?n*100:undefined,reset:/^[0-9]+$/.test(headers[prefix+'reset']||'')&&Number.isFinite(new Date(Number(headers[prefix+'reset'])*1000).getTime())?new Date(Number(headers[prefix+'reset'])*1000).toISOString():undefined,stamp:passive?.observed_at,source:'模型回复'};
- });
+ }).filter(item=>item.label!=='Fable 5 · 7 天'||Number.isFinite(item.percent)||item.active===false);
 }
 function quotaCountdown(reset,now=Date.now()){
  const end=Date.parse(reset||'');if(!Number.isFinite(end))return '重置时间未报告';
@@ -69,6 +69,8 @@ function renderAccountQuota(parent,p,showDetails=false){
  const wrap=text(parent,'section','','account-quota');wrap.setAttribute('aria-label','订阅额度');
  const sources=new Map();
  for(const item of accountQuotaWindows(p.state)){
+  // A reported disabled window is useful in details, not an available card quota.
+  if(!showDetails&&item.label==='Fable 5 · 7 天'&&item.active===false)continue;
   const stale=Number.isFinite(Date.parse(item.reset||''))&&Date.parse(item.reset)<=Date.now();
   const valid=Number.isFinite(item.percent)&&item.percent>=0&&item.percent<=100,remaining=valid?100-item.percent:undefined;
   const tone=stale?'quota-stale':valid&&remaining<30?'quota-danger':valid&&remaining<70?'quota-warning':'';

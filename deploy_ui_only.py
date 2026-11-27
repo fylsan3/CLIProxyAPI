@@ -7,7 +7,8 @@ import argparse, hashlib, http.client, json, os, plistlib, subprocess, tempfile,
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
-FILES=('build_page.py','ui/integration.js','ui/linked.js','ui/compiled.js','static/management.local.html')
+UI_REVISION='accounts-ui18'
+FILES=('build_page.py','build_inputs.py','ui/app.js','ui/style.css','ui/quota_view.js','ui/integration.js','ui/linked.js','ui/compiled.js','static/management.local.html')
 
 def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 
@@ -48,16 +49,16 @@ def main(apply=False):
     if hashlib.sha256(live).hexdigest()!=digest(release/'static/management.local.html'):raise ValueError('different_served_release')
     pid_command=['pgrep','-f',str(release/'central/cli-proxy-api')]
     pids=subprocess.check_output(pid_command).decode().split()
-    report={'release':str(release),'files':list(FILES),'ui_revision':'accounts-ui15','restart':False,'account_operations':0,'apply':apply}
+    report={'release':str(release),'files':list(FILES),'ui_revision':UI_REVISION,'restart':False,'account_operations':0,'apply':apply}
     if not apply:print(json.dumps(report,indent=2));return
-    transaction=home/'transactions'/('ui15-'+str(time.time_ns()));transaction.mkdir(parents=True,mode=0o700)
+    transaction=home/'transactions'/(UI_REVISION+'-'+str(time.time_ns()));transaction.mkdir(parents=True,mode=0o700)
     for name,raw in original.items():
         destination=transaction/name;destination.parent.mkdir(parents=True,exist_ok=True);destination.write_bytes(raw)
     saved_manifest=manifest_path.read_bytes();(transaction/'release-manifest.json').write_bytes(saved_manifest)
     try:
         # Publish the self-contained HTML last; existing tabs keep running old JS.
         for name in FILES:atomic(release/name,(ROOT/name).read_bytes(),modes[name]);manifest['files'][name]=digest(release/name)
-        manifest['ui_revision']='accounts-ui15'
+        manifest['ui_revision']=UI_REVISION
         atomic(manifest_path,(json.dumps(manifest,indent=2)+'\n').encode())
         if fetch_page()!=(ROOT/'static/management.local.html').read_bytes():raise ValueError('served_ui_mismatch')
         if any(digest(release/n)!=v for n,v in protected.items()):raise ValueError('protected_runtime_changed')
@@ -69,7 +70,7 @@ def main(apply=False):
         raise
     report.update(transaction=str(transaction),same_central_process=True,runtime_and_configuration_unchanged=True,served_ui_verified=True)
     (transaction/'result.json').write_text(json.dumps(report,indent=2)+'\n')
-    (ROOT/'evidence/ui15-publication.json').write_text(json.dumps(report,indent=2)+'\n')
+    (ROOT/'evidence/ui18-publication.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))
 
 if __name__=='__main__':

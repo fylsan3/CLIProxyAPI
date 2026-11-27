@@ -38,3 +38,10 @@ for(const value of [null,undefined,-1,101,'']){incomplete.account_observation.us
 incomplete.account_observation.usage.values.five_hour.utilization=0;
 assert.equal(context.accountQuotaWindows(incomplete)[0].percent,0);
 console.log('inactive quota, invalid values and newer valid observations passed');
+
+for(const value of [{},{utilization:null},{utilization:''},{utilization:NaN},{utilization:101}]){
+ const missing={account_observation:{usage:{values:{seven_day_oi:value}}}};
+ assert(!context.accountQuotaWindows(missing).some(x=>x.label.includes('Fable')));
+}
+assert.equal(context.accountQuotaWindows({account_observation:{usage:{values:{seven_day_oi:{utilization:0}}}}}).find(x=>x.label.includes('Fable')).percent,0);
+console.log('F5 absent/empty/invalid hidden; reported zero retained');
