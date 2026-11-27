@@ -7,8 +7,8 @@ import argparse, hashlib, http.client, json, os, plistlib, subprocess, tempfile,
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
-UI_REVISION='accounts-ui18'
-FILES=('build_page.py','build_inputs.py','ui/app.js','ui/style.css','ui/quota_view.js','ui/integration.js','ui/linked.js','ui/compiled.js','static/management.local.html')
+UI_REVISION='accounts-ui24'
+FILES=('build.py','build_page.py','build_inputs.py','ui/app.js','ui/index.html','ui/metrics.js','ui/style.css','ui/quota_view.js','ui/integration.js','ui/linked.js','ui/compiled.js','static/management.local.html')
 
 def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 
@@ -70,7 +70,7 @@ def main(apply=False):
         raise
     report.update(transaction=str(transaction),same_central_process=True,runtime_and_configuration_unchanged=True,served_ui_verified=True)
     (transaction/'result.json').write_text(json.dumps(report,indent=2)+'\n')
-    (ROOT/'evidence/ui18-publication.json').write_text(json.dumps(report,indent=2)+'\n')
+    (ROOT/'evidence'/f'{UI_REVISION}-publication.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))
 
 if __name__=='__main__':

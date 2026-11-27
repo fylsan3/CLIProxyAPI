@@ -106,20 +106,23 @@ function renderCard(p,data){
  card.dataset.search=((p.label||'')+' '+p.slug).toLocaleLowerCase();
  const main=text(card,'div','','card-main'),heading=text(main,'div','','card-heading'),title=text(heading,'div','','account-title');
  const subscriptionHeading=text(title,'h2','Claude 订阅号','subscription-heading');text(subscriptionHeading,'span',subscriptionLabel(p.state),'subscription-badge');
- text(title,'p',p.identity?.email||p.label||'待授权账号','muted account-email');
  const needsAuth=['authorization_required','authorization_pending'].includes(p.reason);
  const headingActions=text(heading,'div','','card-heading-actions');
- text(headingActions,'span',p.overall_ready?'可接单':p.protection?.phase==='creating'?'创建中':p.protection?.phase==='creation_failed'?'创建失败':p.reason==='missing'?'待创建环境':p.reason==='authorization_pending'?'等待授权':p.reason==='authorization_required'?'需要授权':'暂停接单','badge '+accountTone(p));
+ const statusButton=text(headingActions,'button',p.overall_ready?'可接单':p.protection?.phase==='creating'?'创建中':p.protection?.phase==='creation_failed'?'创建失败':p.reason==='missing'?'待创建环境':p.reason==='authorization_pending'?'等待授权':p.reason==='authorization_required'?'需要授权':'暂停接单','badge '+accountTone(p));
  const protection=p.protection||{phase:'not_created'},backup=p.portable_backup,central=p.central_dispatch||{reason:'unknown'};
  const centralLabels={eligible:'调度条件满足',cooldown:'中央冷却中',disabled:'中央已停用',unavailable:'中央暂不可用',unknown:'中央状态无法读取'};
- const facts=text(main,'dl','','card-facts');fact(facts,'容器状态',p.protection?.phase==='creating'?'正在准备环境':p.protection?.phase==='creation_failed'?'创建未完成':p.reason==='missing'?'尚未创建':labels[p.reason]||'状态待确认',accountTone(p));fact(facts,'账号网络',p.network?(p.network.healthy?'检查通过':'检查未通过'): '等待检查',p.network?(p.network.healthy?'status-ok':'status-bad'):'');fact(facts,'活动请求',p.state?.active_calls??'—');
+ const statusPanel=renderStatusSummary(main,p);statusButton.classList.add('status-toggle');statusButton.setAttribute('aria-expanded',String(!statusPanel.hidden));statusButton.dataset.focusId=p.slug+':status';statusButton.onclick=()=>{const open=statusPanel.hidden;statusPanel.hidden=!open;statusButton.setAttribute('aria-expanded',String(open));if(open)statusExpanded.add(p.slug);else statusExpanded.delete(p.slug);};
+ const identityRow=text(heading,'div','','account-identity-row');
+ const email=text(identityRow,'p',p.identity?.email||p.label||'待授权账号','muted account-email');email.title=email.textContent;
+ const inflight=text(identityRow,'span','在途 '+(p.state?.active_calls??'—'),'inflight-count');inflight.title='此账号当前正在处理的请求数量';
+
  const notice=protection.phase==='creating'?'正在准备此账号的独立运行环境，请查看下方进度。':protection.phase==='creation_failed'?'创建未完成，请查看下方失败步骤与原因。':p.reason==='missing'?'绑定 SOCKS 后创建此账号的独立运行环境。':needsAuth?'在容器浏览器内完成授权，完成后自动关闭浏览器并保存环境。':!p.overall_ready?(labels[p.reason]||centralLabels[central.reason]||'请展开详情查看原因。'):'';
  text(main,'p',notice,'card-notice '+(accountTone(p)==='status-bad'?'status-bad':''));
  if(p.network?.timezone_warning)text(main,'p',p.network.timezone_check_reason==='timezone_changed'?'出口时区与固定时区不同；继续使用 '+p.network.fixed_timezone+'。':'本次未能核对出口时区；继续使用已保存的时区。','card-notice status-bad');
  if(p.state?.authorization_issue)text(main,'p',authorizationLabels[p.state.authorization_issue]||'授权未完成，请查看详情。','error');
  if(p.state?.storage_warning)text(main,'p','凭据保存或备份异常，请检查存储；有效调用继续按 CPA 原逻辑处理。','error');
  if(p.state?.resources?.last_oom_at)text(main,'p','最近内存不足记录：'+new Date(p.state.resources.last_oom_at*1000).toLocaleString()+'，系统终止了容器内进程。请检查浏览器与内存用量。','status-bad');
- renderCreation(main,p);
+ renderCreation(main,p);renderActivity(main,p);
  renderAccountQuota(main,p);renderResetGrants(main,p);
  const actions=text(main,'div','','actions');
  if(p.reason==='missing'&&['not_created','creation_failed'].includes(protection.phase)){
@@ -194,14 +197,14 @@ async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].include
  if([...providerSelect.options].some(o=>o.value===oldProvider))providerSelect.value=oldProvider;providerSelect.disabled=providerSelect.options.length===0;
  document.querySelector('#runtime-mode').textContent=data.runtime_mode==='managed'?'运行模式：账号独立容器 · 真实订阅通道待验收':data.runtime_mode==='closed_tls_test'?'闭网 HTTPS 测试 · 官方域名由本地测试服务响应 · 没有真实账号':'闭网模拟测试 · 没有真实账号';
  if(trackedAuthorization&&!working){const current=data.projects.find(p=>p.slug===trackedAuthorization);if(current){const phase=current.protection?.phase;const progress=document.querySelector('#progress');if(phase==='ready'){progress.textContent='授权已保存，浏览器已关闭，环境备份校验通过。实际接单资格请看账号卡片。';delete viewers[trackedAuthorization];trackedAuthorization='';}else if(phase==='authorizing'){progress.textContent='正在等待容器浏览器内的授权操作；完成后自动关闭浏览器并备份。';}else if(phase){progress.textContent=protectionLabels[phase]||'正在检查授权后的环境状态。';}}}
- renderLogging(data.logging_to_file);
+ renderLogging(data.logging_to_file);renderResourceMonitor(data.resource_monitor);
  for(const card of document.querySelectorAll('.account-card'))if(!data.projects.some(p=>p.slug===card.dataset.account)){cardMotion.remove(card);card.remove();}
  for(const child of [...accounts.children])if(!child.matches('.account-card,.account-slot'))child.remove();
  document.querySelector('#version').textContent='运行版本：'+data.release.candidate+' · 自动刷新并发：'+(data.refresh_workers??'未知');
  currentProjects=data.projects;
  document.querySelector('#count-all').textContent=data.projects.length;
  document.querySelector('#count-ready').textContent=data.projects.filter(p=>p.overall_ready).length;
- document.querySelector('#count-pending').textContent=data.projects.filter(p=>!p.overall_ready).length;
+ const pendingCount=data.projects.filter(p=>!p.overall_ready).length;document.querySelector('#count-pending').textContent=pendingCount;document.querySelector('#overview-pending').classList.toggle('has-pending',pendingCount>0);
  document.querySelector('#list-count').textContent=data.projects.length?String(data.projects.length):'';
  if(!data.projects.length){
   const empty=text(accounts,'div','','empty');
@@ -219,7 +222,7 @@ async function refresh(force=false){if(busy||(!force&&['INPUT','SELECT'].include
  if(a.response)text(block,'p','回复摘要：'+a.response.slice(0,16)+'…');});
  if(group.truncated)text(block,'p','记录超过页面上限，需查询完整本地记录。');}
  status.className='';status.textContent='更新于 '+new Date().toLocaleTimeString();
- }catch(e){renderLogging(null);status.textContent=e.message;status.className='error';for(const id of ['count-all','count-ready','count-pending'])document.querySelector('#'+id).textContent='—';document.querySelectorAll('.account-card').forEach(cardMotion.remove);accounts.replaceChildren();const failure=text(accounts,'div','','empty');text(failure,'h3','暂时无法读取账号状态');text(failure,'p','请检查管理服务连接后重试。当前页面不显示过期的接单状态。');const retry=text(failure,'button','重新读取');retry.onclick=()=>refresh(true);document.querySelector('#requests').replaceChildren();}finally{busy=false;if(focusKey){[...document.querySelectorAll('[data-focus-id]')].find(el=>el.dataset.focusId===focusKey)?.focus({preventScroll:true});}}}
+ }catch(e){renderLogging(null);renderResourceMonitor(null);status.textContent=e.message;status.className='error';document.querySelector('#overview-pending').classList.remove('has-pending');for(const id of ['count-all','count-ready','count-pending'])document.querySelector('#'+id).textContent='—';document.querySelectorAll('.account-card').forEach(cardMotion.remove);accounts.replaceChildren();const failure=text(accounts,'div','','empty');text(failure,'h3','暂时无法读取账号状态');text(failure,'p','请检查管理服务连接后重试。当前页面不显示过期的接单状态。');const retry=text(failure,'button','重新读取');retry.onclick=()=>refresh(true);document.querySelector('#requests').replaceChildren();}finally{busy=false;if(focusKey){[...document.querySelectorAll('[data-focus-id]')].find(el=>el.dataset.focusId===focusKey)?.focus({preventScroll:true});}}}
 const selectedAccount=new URLSearchParams(location.search).get('account');if(selectedAccount)document.querySelector('#account-search').value=selectedAccount;
 document.querySelector('#refresh').addEventListener('click',()=>refresh(true));refresh();setInterval(()=>{if(!document.hidden)refresh();},5000);
 

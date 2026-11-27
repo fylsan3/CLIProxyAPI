@@ -1,5 +1,5 @@
 """Local-only visual acceptance fixture; never forwards write requests."""
-import copy,http.client,http.server,json,sys,datetime
+import copy,http.client,http.server,json,sys,datetime,time,math
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 MODE=Path(sys.argv[2]) if len(sys.argv)>2 else ROOT/'evidence/ui-preview-mode'
@@ -44,6 +44,12 @@ def snapshot():
     if mode in ('f5-empty','f5-zero','f5-inactive'):
         sample['projects']=[a,b]
         a['state']['account_observation']['usage']['values']['seven_day_oi']={} if mode=='f5-empty' else {'utilization':0,'is_active':mode!='f5-inactive'}
+    now=int(time.time())
+    points=[{'at':now-i*30,'accounts':2,'memory_bytes':(600+80*math.sin(i/9))*1048576,'cpu_percent':8+6*math.sin(i/4),'disk_bytes':(1.2+i/10000)*1073741824} for i in range(120,-1,-1)]
+    sample['resource_monitor']={'current':points[-1],'history_since':points[0]['at'],'observed_at':now,'stale':False,'series':{'1h':points,'24h':points,'7d':points}}
+    for p in sample['projects']:
+        p['resource_sample']={'at':now,'memory_bytes':351*1048576,'memory_limit_bytes':2048*1048576,'memory_peak_bytes':1204*1048576}
+        p['activity']={'observed_at':now,'last_request_at':now-180,'seven_day':{'success':39,'failed':0,'unknown':0,'active':0},'rpm':0,'tpm':0,'peak_rpm':8}
     return sample
 
 class Handler(http.server.BaseHTTPRequestHandler):

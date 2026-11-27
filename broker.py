@@ -47,12 +47,27 @@ class Broker:
             for column in ('usage','input_sha256','ingress_sha256'):
                 if column not in columns:db.execute('ALTER TABLE attempts ADD COLUMN '+column+' TEXT')
             db.execute("UPDATE attempts SET state='result_unknown' WHERE state IN ('running','preparing')")
+            from account_metrics import initialize
+            initialize(db)
+        self.metrics_cache={}
         from portable_backup import Packages
         self.packages=Packages(self)
         for owner in self.registry.owners():
             self.packages.commit_restore(owner)
             self.protection.recover_creation(owner)
         self.browsers.recover()
+        from resource_monitor import Monitor
+        try:self.resources=Monitor(self,CLI)
+        except (OSError,sqlite3.Error):
+            self.resources=None
+            print('Local resource monitoring unavailable; account service continues.',file=sys.stderr)
+    def activity(self,owner):
+        from account_metrics import summarize as activity_summary
+        now=int(time.time());cached=self.metrics_cache.get(owner)
+        if cached and now-cached['observed_at']<15:return cached
+        with self.connect() as db:value=activity_summary(db,owner,now)
+        self.metrics_cache[owner]=value
+        return value
     def available_providers(self):
         mode=self.protection.control.fixture.get('mode','closed_test')
         selected='mock-claude' if mode=='closed_test' else 'claude-subscription'
@@ -361,7 +376,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         state=broker.status(owner);ident=state.get('container')
         reason='controller_stopping' if broker.stopping.is_set() else state['reason'] if not state.get('ready') else None
         if reason:
-            with broker.connect() as db:db.execute("UPDATE attempts SET state='not_dispatched',container=?,status=503,stop_reason=? WHERE id=?",(ident,reason,attempt))
+            with broker.connect() as db:db.execute("UPDATE attempts SET state='not_dispatched',container=?,status=503,stop_reason=?,finished=? WHERE id=?",(ident,reason,int(time.time()),attempt))
             return self.answer(503,{'error':{'message':reason}})
         with broker.connect() as db:db.execute("UPDATE attempts SET state='running',container=? WHERE id=?",(ident,attempt))
         receipt_host=broker.inspect(owner)['Config']['Hostname']
@@ -400,14 +415,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if not isinstance(native_usage,str) or len(native_usage)>44000 or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' for c in native_usage):raise PolicyError('invalid_usage_receipt')
                     done=True
             if process.wait()!=0 or not done or watch.cancelled.is_set():raise PolicyError('worker_interrupted')
-            with broker.connect() as db:db.execute("UPDATE attempts SET state='completed',status=?,response=?,usage=? WHERE id=?",(status,digest.hexdigest(),json.dumps(native_usage_observation(native_usage,observer.finish(True,status),status)),attempt))
+            with broker.connect() as db:db.execute("UPDATE attempts SET state='completed',status=?,response=?,usage=?,finished=? WHERE id=?",(status,digest.hexdigest(),json.dumps(native_usage_observation(native_usage,observer.finish(True,status),status)),int(time.time()),attempt))
             completed=True
             if sent:self.wfile.write(b'0\r\n'+(('X-Offline-Native-Usage: '+native_usage+'\r\n').encode() if native_usage else b'')+b'\r\n');self.wfile.flush()
             else:begin(False);self.wfile.write(output)
         except (OSError,ValueError,KeyError,PolicyError,subprocess.SubprocessError):
             with broker.connect() as db:
                 if completed:db.execute("UPDATE attempts SET stop_reason='client_delivery_incomplete' WHERE id=?",(attempt,))
-                else:db.execute("UPDATE attempts SET state='result_unknown',status=?,stop_reason=?,usage=? WHERE id=?",(status,watch.reason if watch and watch.cancelled.is_set() else 'execution_interrupted',json.dumps(observer.finish(False,status)),attempt))
+                else:db.execute("UPDATE attempts SET state='result_unknown',status=?,stop_reason=?,usage=?,finished=? WHERE id=?",(status,watch.reason if watch and watch.cancelled.is_set() else 'execution_interrupted',json.dumps(observer.finish(False,status)),int(time.time()),attempt))
             self.close_connection=True
             if not sent and not (watch and watch.cancelled.is_set()):
                 try:self.answer(502,{'error':{'message':'native_execution_incomplete'}})

@@ -3,7 +3,7 @@
   const nativeDocument = document;
   const host = nativeDocument.createElement('div');
   host.id = 'account-environments-app';
-  host.dataset.uiRevision = 'accounts-ui18';
+  host.dataset.uiRevision = 'accounts-ui24';
   const syncStatusTheme=()=>{host.dataset.stateTheme=nativeDocument.documentElement.dataset.theme==='dark'?'dark':'light';};
   syncStatusTheme();
   new MutationObserver(syncStatusTheme).observe(nativeDocument.documentElement,{attributes:true,attributeFilter:['data-theme']});
@@ -119,6 +119,7 @@
       return response;
     }
     __QUOTA__
+    __METRICS__
     __SETTINGS__
     __PROGRESS__
     __APP__

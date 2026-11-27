@@ -42,7 +42,7 @@ def build_control():
  run([sys.executable,'-B',str(ROOT/'build_page.py')])
  for p in ROOT.rglob('*'):
   if p.is_file() and allowed(str(p.relative_to(ROOT))):manifest['files'][str(p.relative_to(ROOT))]=digest(p)
- manifest['ui_revision']='accounts-ui17'
+ manifest['ui_revision']='accounts-ui24'
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Controller/UI build complete; Go binaries and container images unchanged.',flush=True)
 def build_capture():
@@ -72,7 +72,7 @@ def build_capture():
  run([sys.executable,'-B',str(ROOT/'build_page.py')])
  (ROOT/'image.json').write_text(json.dumps(info,indent=2)+'\n')
  for name in manifest['files']:manifest['files'][name]=digest(ROOT/name)
- manifest.update(candidate=VERSION,ui_revision='accounts-ui17',capture_export_version=2,capture_patch_bases=prior,images={k:info[k] for k in manifest['images']})
+ manifest.update(candidate=VERSION,ui_revision='accounts-ui24',capture_export_version=2,capture_patch_bases=prior,images={k:info[k] for k in manifest['images']})
  (ROOT/'release-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print('Capture package complete; existing Go binaries and runtime environment retained.',flush=True)
 def build(images=True, runtime_base=None, fixture_base=None):

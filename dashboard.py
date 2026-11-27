@@ -1,7 +1,7 @@
 """The shared authenticated management contract for the offline account broker."""
 
 from account_identity import valid_slug
-import json
+import json,sqlite3
 from sample_status import capture_summary
 
 def capture_monitor_account(broker,project):
@@ -29,6 +29,8 @@ def capture_issue_status(broker,project):
 
 def snapshot(broker):
     _, result = broker.admin('list', {})
+    try:result['resource_monitor']=broker.resources.snapshot() if getattr(broker,'resources',None) else None
+    except (OSError,ValueError,sqlite3.Error):result['resource_monitor']=None
     for project in result['projects']:
         from action_trace import latest
         project['last_account_update']=latest(broker.folder,project['slug'])
@@ -41,6 +43,9 @@ def snapshot(broker):
         project['portable_backup']=broker.packages.status(project['slug'].upper())
         _, project['usage'] = broker.admin('usage', {'slug': project['slug']})
         _, project['statistics'] = broker.admin('account-statistics', {'slug': project['slug']})
+        try:project['activity']=broker.activity(project['slug'].upper()) if hasattr(broker,'activity') else None
+        except (OSError,ValueError,sqlite3.Error):project['activity']=None
+        project['resource_sample']=(result.get('resource_monitor') or {}).get('accounts',{}).get(project['slug'].upper())
     _, reconciliation = broker.admin('reconcile', {})
     result['requests'] = reconciliation['requests']
     result['offline_only'] = broker.offline_only

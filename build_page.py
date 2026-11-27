@@ -16,7 +16,7 @@ app=app.replace('请使用测试启动目录中 status-page.json 的完整地址
 script=(r/'ui/integration.js').read_text()
 quota=(r/'ui/quota_view.js').read_text()
 linked=(r/'ui/linked.js').read_text().replace('__QUOTA__',quota)
-for key,value in {'CSS':css.replace('\\','\\\\').replace("'","\\'").replace('\n',''), 'MARKUP':json.dumps(markup,ensure_ascii=False),'QUOTA':quota,'SETTINGS':(r/'ui/settings.js').read_text(),'PROGRESS':(r/'ui/creation.js').read_text(),'NAVIGATION':(r/'ui/navigation.js').read_text(),'LINKED':linked,'APP':app}.items():
+for key,value in {'CSS':css.replace('\\','\\\\').replace("'","\\'").replace('\n',''), 'MARKUP':json.dumps(markup,ensure_ascii=False),'QUOTA':quota,'METRICS':(r/'ui/metrics.js').read_text(),'SETTINGS':(r/'ui/settings.js').read_text(),'PROGRESS':(r/'ui/creation.js').read_text(),'NAVIGATION':(r/'ui/navigation.js').read_text(),'LINKED':linked,'APP':app}.items():
     script=script.replace('__'+key+'__',value)
 assert '</script>' not in script
 (r/'static/management.local.html').write_bytes(source.replace(b'</script>',b'\n'+script.encode()+b'\n</script>',1))
