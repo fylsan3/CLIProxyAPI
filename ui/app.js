@@ -134,6 +134,7 @@ function renderCard(p,data){
  if(p.container){
   if(viewers[p.slug]){const link=text(actions,'a','进入容器浏览器','button-link');link.href=viewers[p.slug];link.target='_blank';link.rel='noreferrer noopener';}
   const stopped=p.reason==='container_stopped';
+  if(!stopped){const cli=text(actions,'button','Claude Code','secondary');cli.onclick=()=>openClaudeTerminal(p);}
   if(!stopped){action(actions,'open-browser','浏览器',true);if(viewers[p.slug])action(actions,'close-browser','关闭容器浏览器',true);}
   if(p.reason==='authorization_pending')action(actions,'auth-cancel','取消本次授权',true);
   const restart=action(actions,'restart',stopped?'启动容器':'重启容器',true);

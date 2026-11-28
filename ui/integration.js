@@ -122,6 +122,7 @@
     __METRICS__
     __SETTINGS__
     __PROGRESS__
+    __CLAUDE__
     __APP__
   }
   session.subscribe((next, before) => {

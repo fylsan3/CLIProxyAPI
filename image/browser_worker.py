@@ -123,16 +123,22 @@ class Worker:
             current=self.data()
             if current['startup_error'] and op not in ('status','close-browser'):
                 raise ValueError(current['startup_error'])
-            if op in ("begin","open-browser"):
+            if op in ("begin","open-browser","open-claude-browser"):
                 target=body.get('url')
                 if not target:
                     target=self.target if self.browser and self.browser.poll() is None else ('about:blank' if op=='open-browser' else self.target)
                 parsed=urlsplit(target or '')
                 official=os.environ.get('CPA_PROVIDER')=='claude-subscription'
                 allowed=(parsed.scheme=='https' and parsed.netloc=='claude.ai' if official else parsed.scheme=='http' and parsed.netloc==owner.lower()+'.upstream.invalid:8080')
+                cli_entry=op=='open-claude-browser' or (op=='open-browser' and not body.get('url') and getattr(self,'claude_authorization',False))
+                if cli_entry:
+                    allowed=parsed.scheme=='https' and (parsed.hostname,parsed.path) in {('claude.ai','/oauth/authorize'),('platform.claude.com','/oauth/authorize'),('claude.com','/cai/oauth/authorize')} and parsed.port in (None,443)
                 blank_reentry=op=='open-browser' and not body.get('url') and target=='about:blank'
-                if not blank_reentry and (not allowed or parsed.path!='/oauth/authorize' or parsed.username is not None):
+                if not blank_reentry and (not allowed or (not cli_entry and parsed.path!='/oauth/authorize') or parsed.username is not None):
                     raise ValueError('authorization_url_rejected')
+                if op=='open-claude-browser' and target!=self.target:self.close()
+                if op=='open-claude-browser':self.claude_authorization=True
+                elif op=='begin':self.claude_authorization=False
                 self.target=target
                 if self.browser is None or self.browser.poll() is not None:
                     self.close();self.seen.clear();self.ack.clear();self.consent.clear();self.diagnostics=[]

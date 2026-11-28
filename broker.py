@@ -343,12 +343,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.close_connection=True
         self.connection.settimeout(4)
         try:
+            if self.path=='/claude-code/messages':
+                length=int(self.headers.get('Content-Length','0'))
+                if not 0<length<=131072:return self.answer(400,{'error':'invalid_claude_request'})
+                body=json.loads(self.rfile.read(length));self.connection.settimeout(None)
+                from claude_code_control import message
+                code,result=message(self.server.broker,body,self.connection)
+                return self.answer(code,result)
             is_message=self.path in ('/v1/messages','/v1/messages/count_tokens')
             if is_message:self.connection.settimeout(None)
             raw,body=(read_message if is_message else body_object)(self.headers,self.rfile);self.connection.settimeout(None)
             if is_message:return self.messages(raw,body)
             if not self.path.startswith('/admin/'):return self.answer(404,{})
             status,result=self.server.broker.admin(self.path[7:],body,self.connection);self.answer(status,result)
+        except (BrokenPipeError,ConnectionResetError):self.close_connection=True
         except CreationFailure as error:self.answer(503,{'error':{'message':error.code}})
         except (PolicyError,OSError,ValueError,KeyError,subprocess.SubprocessError):self.answer(503,{'error':{'message':'native_worker_unavailable'}})
     def messages(self,raw,body):

@@ -7,7 +7,7 @@ remind_linked_review(r,'build:management-page')
 source=(r/'static/management.html').read_bytes()
 if hashlib.sha256(source).hexdigest()!='13674049eb63ef2d3df8daf58aa1f42b397460ab5fedebd43a3bfc48fe20bbc7' or source.count(b'</script>')!=1:
     raise SystemExit('Management asset changed; review its session/theme adapter before building.')
-css=(r/'ui/style.css').read_text()
+css=(r/'ui/style.css').read_text()+'\n'+(r/'ui/vendor/xterm.css').read_text()+'\n'+(r/'ui/claude_code.css').read_text()
 markup=(r/'ui/index.html').read_text();markup=markup[markup.index('<main>'):markup.index('</main>')+7]
 markup=re.sub(r'<p class="eyebrow">.*?</p>','',markup)
 app=(r/'ui/app.js').read_text()
@@ -19,6 +19,8 @@ linked=(r/'ui/linked.js').read_text().replace('__QUOTA__',quota)
 for key,value in {'CSS':css.replace('\\','\\\\').replace("'","\\'").replace('\n',''), 'MARKUP':json.dumps(markup,ensure_ascii=False),'QUOTA':quota,'METRICS':(r/'ui/metrics.js').read_text(),'SETTINGS':(r/'ui/settings.js').read_text(),'PROGRESS':(r/'ui/creation.js').read_text(),'NAVIGATION':(r/'ui/navigation.js').read_text(),'LINKED':linked,'APP':app}.items():
     script=script.replace('__'+key+'__',value)
 assert '</script>' not in script
+script=script.replace('__CLAUDE__',(r/'ui/claude_code.js').read_text())
+script=(r/'ui/vendor/xterm.js').read_text()+'\n'+script
 (r/'static/management.local.html').write_bytes(source.replace(b'</script>',b'\n'+script.encode()+b'\n</script>',1))
 (r/'static/management.html').write_bytes(source)
 (r/'ui/compiled.js').write_text(script)

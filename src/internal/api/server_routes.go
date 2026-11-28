@@ -91,6 +91,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/audio/speech", openaiHandlers.AudioSpeech)
 		v1.POST("/tts", openaiHandlers.XAITTS)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
+		v1.POST("/claude-code/messages", s.mgmt.ClaudeCodeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
 		v1.GET("/responses", s.containerProtocol("websocket", openaiResponsesHandlers.ResponsesWebsocket))
 		v1.POST("/responses", s.containerProtocol("responses", openaiResponsesHandlers.Responses))

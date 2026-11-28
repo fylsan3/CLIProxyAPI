@@ -51,6 +51,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply(200,json.dumps(result).encode(),'application/json')
             except Exception:return self.reply(503,b'{"error":"status_unavailable"}','application/json')
         files={'/':('index.html','text/html; charset=utf-8'),'/creation.js':('creation.js','text/javascript; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/settings.js':('settings.js','text/javascript; charset=utf-8'),'/quota_view.js':('quota_view.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
+        files.update({'/xterm.js':('vendor/xterm.js','text/javascript; charset=utf-8'),'/xterm.css':('vendor/xterm.css','text/css; charset=utf-8'),'/claude_code.js':('claude_code.js','text/javascript; charset=utf-8'),'/claude_code.css':('claude_code.css','text/css; charset=utf-8'),'/metrics.js':('metrics.js','text/javascript; charset=utf-8')})
         if self.path not in files:return self.reply(404,b'{}','application/json')
         name,kind=files[self.path];self.reply(200,(ROOT/'ui'/name).read_bytes(),kind)
 

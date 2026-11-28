@@ -132,6 +132,10 @@ def build(images=True, runtime_base=None, fixture_base=None):
  (ROOT/'release-manifest.json').write_text(json.dumps({'candidate':'container-native7','build_runtime_base':runtime_base or base['id'],'published':False,'images':{k:base[k] for k in ['id','tls_test','tls_fixture']},'manual_overrides_unchanged':False,'container_derived_headers':['X-Stainless-OS','X-Stainless-Arch'],'other_manual_overrides_unchanged':True,'files':files},indent=2)+'\n')
  print('Unified build complete; production not modified.',flush=True)
 if __name__=='__main__':
+ if '--claude-code-only' in sys.argv:
+  parser=argparse.ArgumentParser();parser.add_argument('--claude-code-only',action='store_true');parser.add_argument('--claude-binary',required=True);parser.add_argument('--runtime-base',required=True);args=parser.parse_args()
+  from build_claude_code import build_claude_code
+  build_claude_code(args.claude_binary,args.runtime_base);raise SystemExit(0)
  parser=argparse.ArgumentParser();parser.add_argument('--runtime-base',help='Explicit local build base override; never rewrites frozen base-images.json');parser.add_argument('--fixture-base',help='Existing local fixture build base');modes=parser.add_mutually_exclusive_group();modes.add_argument('--compile-only',action='store_true');modes.add_argument('--control-only',action='store_true');modes.add_argument('--capture-only',action='store_true');args=parser.parse_args()
  if args.control_only:build_control()
  elif args.capture_only:build_capture()

@@ -35,6 +35,8 @@ def run():
     try:
         start(['/opt/native/worker','serve'])
         start(['python3','-B','/opt/sample/worker.py','serve'])
+        if Path('/opt/claude-code/claude').exists():
+            start(['python3','-B','/opt/native/claude_code.py','serve'])
         while not stopping:
             if any(p.poll() is not None for p in processes):return 1
             time.sleep(.1)

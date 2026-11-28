@@ -1,0 +1,10 @@
+{
+  "version": "2.1.331",
+  "platform": "linux-arm64",
+  "binary_sha256": "3e5afea76cf6ed53f42076d8b175c4ee3d9ab34cd9b90452da115d21ad0d5d31",
+  "binary_bytes": 397534392,
+  "registry": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/2.1.331",
+  "tarball": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-2.1.331.tgz",
+  "integrity": "sha512-zy+OOB7i1J7rCjNoPB2ZBD7EAtT0Eus1wH+toklZGL2XpwHyw+POGUGOpEBBE6xe5EkAYWXzFSTQ3uD8UtWlRg==",
+  "auto_update": false
+}

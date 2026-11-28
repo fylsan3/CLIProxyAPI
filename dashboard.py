@@ -60,6 +60,9 @@ def action(broker, body):
     if not isinstance(body, dict):
         return 400, {'error': 'invalid_request'}
     operation = body.get('action')
+    if isinstance(operation,str) and operation.startswith('claude-'):
+        from claude_code_control import action as claude_action
+        return claude_action(broker,body)
     if operation == 'logging-update':
         if set(body) != {'action', 'value'} or type(body['value']) is not bool:
             return 400, {'error': 'invalid_request'}
